@@ -41,16 +41,10 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: 安装 Python 依赖
+    - name: 安装依赖
       run: |
         python -m pip install --upgrade pip
         pip install pandas pyarrow duckdb Pillow terraink-py
-
-    # 💥 新增步骤 1：为云端服务器安装中文字体和高清渲染引擎 💥
-    - name: 安装渲染工具和中文字体
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y inkscape fonts-noto-cjk
 
     - name: 下载最新 data.db
       run: |
@@ -68,13 +62,15 @@ jobs:
           --city "${{ github.event.inputs.city }}" \
           --province "${{ github.event.inputs.province }}"
 
-    # 💥 新增步骤 2：使用 Inkscape 将 SVG 转换为 300PPI 的高清 PNG 💥
-    - name: 渲染高清 300PPI PNG
+    # 💥 新增核心步骤：使用 Inkscape 将 SVG 渲染为 600ppi 的 PNG 💥
+    - name: 🖼️ 渲染 600ppi 高清 PNG
       run: |
-        inkscape colorful-map.svg --export-dpi=300 --export-background="#1a1a1a" --export-filename=colorful-map.png
+        sudo apt-get update
+        sudo apt-get install -y inkscape
+        inkscape --export-type=png --export-filename=colorful-map.png --export-dpi=600 colorful-map.svg
 
-    # 💥 修改步骤：将 SVG 和 PNG 一起打包提供下载 💥
-    - name: 📦 打包 SVG 和 PNG 并提供下载
+    # 💥 修改打包步骤：同时打包 SVG 和 PNG 提供下载 💥
+    - name: 📦 打包 SVG 和 PNG 提供下载
       uses: actions/upload-artifact@v4
       with:
         name: ${{ github.event.inputs.city }}-Colorful-Map
