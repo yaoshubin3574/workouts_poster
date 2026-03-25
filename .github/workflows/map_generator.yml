@@ -1,4 +1,4 @@
-name: 生成运动轨迹地图 (Cloud Generator)
+name: Workouts Poster Generator
 
 on:
   workflow_dispatch:
@@ -24,20 +24,22 @@ on:
         required: true
         default: '河南省'
 
-# 💥 自动授予代码推送权限，免去手动设置 💥
 permissions:
   contents: write
 
 jobs:
   build_map:
     runs-on: ubuntu-latest
+    
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
     - name: 获取仓库代码
       uses: actions/checkout@v4
 
     - name: 设置 Python 3.12
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.12'
 
@@ -46,7 +48,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install pandas pyarrow duckdb Pillow terraink-py
 
-    # 💥 核心修改：直接从你的 workouts_page 仓库下载最新 data.db 💥
     - name: 下载最新 data.db
       run: |
         wget https://raw.githubusercontent.com/yaoshubin3574/workouts_page/master/run_page/data.db -O data.db
