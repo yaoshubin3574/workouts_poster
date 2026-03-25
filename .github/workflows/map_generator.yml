@@ -24,9 +24,6 @@ on:
         required: true
         default: '河南省'
 
-permissions:
-  contents: write
-
 jobs:
   build_map:
     runs-on: ubuntu-latest
@@ -64,10 +61,9 @@ jobs:
           --city "${{ github.event.inputs.city }}" \
           --province "${{ github.event.inputs.province }}"
 
-    - name: 提交并推送到 GitHub
-      run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        git add colorful-map.svg
-        git commit -m "自动生成: ${{ github.event.inputs.city }} 运动地图" || echo "没有文件改变"
-        git push
+    - name: 打包 SVG 并提供下载
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ github.event.inputs.city }}-Colorful-Map  # 下载压缩包的名字
+        path: colorful-map.svg                              # 要打包的文件
+        retention-days: 7                                   # 下载链接保留 7 天，之后自动清理不占空间
