@@ -75,7 +75,6 @@ filtered_data = []
 for row in raw_rows:
     poly_str, m_type, dist_m, time_s, avg_hr, elev_g = row
     
-    # 强制进行安全格式转换
     dist_m = safe_float(dist_m)
     time_s = parse_time(time_s)
     avg_hr = safe_float(avg_hr)
