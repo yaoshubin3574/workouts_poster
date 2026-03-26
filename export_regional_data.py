@@ -9,6 +9,23 @@ parser.add_argument('--lon', type=float, required=True, help="中心点经度")
 parser.add_argument('--distance', type=int, required=True, help="范围(米)")
 args = parser.parse_args()
 
+def parse_time(val):
+    if val is None: return 0.0
+    if isinstance(val, (int, float)): return float(val)
+    val_str = str(val).strip()
+    if ' ' in val_str: val_str = val_str.split(' ')[-1]
+    try:
+        parts = val_str.split(':')
+        if len(parts) == 3: return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+        elif len(parts) == 2: return float(parts[0]) * 60 + float(parts[1])
+        return float(val_str)
+    except ValueError: return 0.0
+
+def safe_float(val):
+    if val is None: return 0.0
+    try: return float(val)
+    except ValueError: return 0.0
+
 def decode_polyline(polyline_str):
     if not polyline_str: return []
     index, lat, lng = 0, 0, 0
@@ -39,7 +56,6 @@ def haversine(lon1, lat1, lon2, lat2):
 
 print(f"🔍 正在检索以 [{args.lat}, {args.lon}] 为中心，{args.distance}米为半径的运动数据...")
 
-# 💥 已经修复：将 total_elevation_gain 改为 elevation_gain 💥
 sql = """
 SELECT 
     summary_polyline, type, distance, moving_time, average_heartrate, elevation_gain 
@@ -58,8 +74,14 @@ filtered_data = []
 
 for row in raw_rows:
     poly_str, m_type, dist_m, time_s, avg_hr, elev_g = row
-    decoded_points = decode_polyline(poly_str)
     
+    # 强制进行安全格式转换
+    dist_m = safe_float(dist_m)
+    time_s = parse_time(time_s)
+    avg_hr = safe_float(avg_hr)
+    elev_g = safe_float(elev_g)
+    
+    decoded_points = decode_polyline(poly_str)
     if not decoded_points or len(decoded_points) < 2: continue
         
     in_region = False
@@ -71,10 +93,10 @@ for row in raw_rows:
     if in_region:
         filtered_data.append({
             '运动类型 (Type)': m_type,
-            '距离-米 (Distance)': round(float(dist_m if dist_m else 0), 2),
-            '运动时间-秒 (Time)': int(time_s if time_s else 0),
-            '平均心率 (Avg HR)': round(float(avg_hr if avg_hr else 0), 1),
-            '海拔爬升-米 (Elevation)': round(float(elev_g if elev_g else 0), 2)
+            '距离-米 (Distance)': round(dist_m, 2),
+            '运动时间-秒 (Time)': int(time_s),
+            '平均心率 (Avg HR)': round(avg_hr, 1),
+            '海拔爬升-米 (Elevation)': round(elev_g, 2)
         })
 
 df = pd.DataFrame(filtered_data)
