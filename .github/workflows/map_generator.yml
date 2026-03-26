@@ -1,4 +1,4 @@
-name: Workouts Poster Generator
+name: 生成运动轨迹地图 (Cloud Generator)
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ on:
       city:
         description: '城市名称'
         required: true
-        default: '新乡市'
+        default: 'XINXIANG'
 
 jobs:
   build_map:
@@ -56,20 +56,20 @@ jobs:
           --distance ${{ github.event.inputs.distance }} \
           --city "${{ github.event.inputs.city }}"
 
-    - name: 导出区域运动数据 CSV
+    - name: 📊 导出区域运动数据 CSV
       run: |
         python export_regional_data.py \
           --lat ${{ github.event.inputs.lat }} \
           --lon ${{ github.event.inputs.lon }} \
           --distance ${{ github.event.inputs.distance }}
 
-    - name: 渲染 600ppi 高清 PNG
+    - name: 🖼️ 渲染 600ppi 高清 PNG
       run: |
         sudo apt-get update
         sudo apt-get install -y inkscape
         inkscape --export-type=png --export-filename=colorful-map.png --export-dpi=600 colorful-map.svg
 
-    - name: 打包图片和数据提供下载
+    - name: 📦 打包图片和数据提供下载
       uses: actions/upload-artifact@v4
       with:
         name: ${{ github.event.inputs.city }}-Map-and-Data
