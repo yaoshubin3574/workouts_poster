@@ -108,7 +108,7 @@ with duckdb.connect() as conn:
         fallback_rows = conn.execute(fallback_sql).fetchall()
         raw_rows = [(str(r[0]), str(r[1]), 0.0, 0.0, 0.0, 0.0) for r in fallback_rows]
 
-print("步骤 3/3：注入矢量轨迹与全新单行排版统计面板...")
+print("步骤 3/3：注入矢量轨迹与终极自适应排版...")
 
 color_map = {
     'Run': '#FC4C02', 'Cycling': '#00DFD8', 'Ride': '#00DFD8',
@@ -202,74 +202,78 @@ svg_content = re.sub(r'<text\b.*?</text>', '', svg_content, flags=re.IGNORECASE 
 svg_content = re.sub(r'<line\b.*?>', '', svg_content, flags=re.IGNORECASE | re.DOTALL)
 
 # ==========================================
-# 💥 全新排版：间距缩小、单行显示 💥
+# 💥 终极防重叠自适应排版 💥
 # ==========================================
 dark_glass = '<rect width="100%" height="100%" fill="#050505" opacity="0.5" />\n'
 
-# 由于改成了单行，总体高度变小，将其固定在底部往上约 380 像素的位置
-stats_y_pos = height_px - 380
+# 动态提取基于分辨率的绝对高度和宽度
+city_y_pos = height_px * 0.78       # 城市名在画布 78% 的高度
+stats_y_pos = height_px * 0.83      # 看板在画布 83% 的高度
+row2_y = height_px * 0.04           # 第二行向下偏移
+row3_y = height_px * 0.08           # 第三行向下偏移
 
-# 💥 城市名下压：间距缩小到原本的 2/3 (从 -220 改为 -150) 💥
-city_y_pos = stats_y_pos - 150
+# 动态提取基于宽度的自适应间隙和字体大小 (再也不用死磕像素数值)
+f_large = width_px * 0.022          # 大字号(数字)
+f_small = width_px * 0.018          # 小字号(文字)
+col3_gap = width_px * 0.34          # 第一排三个元素的间距 (拉长到占画面的 68%)
+col2_gap = width_px * 0.17          # 第二排两个元素的间距
+line3_gap = width_px * 0.17         # 竖线位置正好卡在元素的正中间
 
+# 渲染城市标题
 city_letter_spacing = f"{width_px * 0.045:.1f}"
 city_title_block = f'<text x="{width_px / 2:.1f}" y="{city_y_pos:.1f}" font-family="Arial, Helvetica, sans-serif" font-size="{width_px * 0.06:.1f}" font-weight="bold" fill="#f0f0f0" xml:space="preserve" letter-spacing="{city_letter_spacing}" text-anchor="middle" opacity="0.9">{args.city.upper()}</text>\n'
 
-# 💥 数据大看板：彻底改为单行排版 (中间用空格拉开距离) 💥
-# 将间距加大至 420 以容纳单行更宽的文本
+# 渲染防重叠看板
 stats_block = (
-    f'<g id="stats_block" transform="translate({width_px/2:.1f}, {stats_y_pos:.1f})" fill="#f0f0f0" font-family="Arial, Helvetica, sans-serif" font-size="45" text-anchor="middle">\n'
+    f'<g id="stats_block" transform="translate({width_px/2:.1f}, {stats_y_pos:.1f})" fill="#f0f0f0" font-family="Arial, Helvetica, sans-serif" font-size="{f_small:.1f}" text-anchor="middle">\n'
     
-    # --- 第一行: Runs, Rides, Hikes (合并为单行) ---
-    f'  <g transform="translate(-420, 0)">\n'
+    # --- 第一行: Runs, Rides, Hikes (绝对拉开间距) ---
+    f'  <g transform="translate(-{col3_gap:.1f}, 0)">\n'
     f'    <text>\n'
-    f'      <tspan font-weight="bold" font-size="55">{run_count}</tspan><tspan xml:space="preserve"> Runs   </tspan>\n'
-    f'      <tspan font-weight="bold" font-size="55">{run_dist_km:.1f}</tspan><tspan xml:space="preserve"> km</tspan>\n'
+    f'      <tspan font-weight="bold" font-size="{f_large:.1f}">{run_count}</tspan><tspan xml:space="preserve"> Runs   </tspan>\n'
+    f'      <tspan font-weight="bold" font-size="{f_large:.1f}">{run_dist_km:.1f}</tspan><tspan xml:space="preserve"> km</tspan>\n'
     f'    </text>\n'
     f'  </g>\n'
 
-    # 分割线 1
-    f'  <line x1="-210" y1="-45" x2="-210" y2="15" stroke="#f0f0f0" stroke-width="4" opacity="0.25" stroke-linecap="round" />\n'
+    f'  <line x1="-{line3_gap:.1f}" y1="-{width_px * 0.018:.1f}" x2="-{line3_gap:.1f}" y2="{width_px * 0.005:.1f}" stroke="#f0f0f0" stroke-width="4" opacity="0.25" stroke-linecap="round" />\n'
 
     f'  <g transform="translate(0, 0)">\n'
     f'    <text>\n'
-    f'      <tspan font-weight="bold" font-size="55">{ride_count}</tspan><tspan xml:space="preserve"> Rides   </tspan>\n'
-    f'      <tspan font-weight="bold" font-size="55">{ride_dist_km:.1f}</tspan><tspan xml:space="preserve"> km</tspan>\n'
+    f'      <tspan font-weight="bold" font-size="{f_large:.1f}">{ride_count}</tspan><tspan xml:space="preserve"> Rides   </tspan>\n'
+    f'      <tspan font-weight="bold" font-size="{f_large:.1f}">{ride_dist_km:.1f}</tspan><tspan xml:space="preserve"> km</tspan>\n'
     f'    </text>\n'
     f'  </g>\n'
 
-    # 分割线 2
-    f'  <line x1="210" y1="-45" x2="210" y2="15" stroke="#f0f0f0" stroke-width="4" opacity="0.25" stroke-linecap="round" />\n'
+    f'  <line x1="{line3_gap:.1f}" y1="-{width_px * 0.018:.1f}" x2="{line3_gap:.1f}" y2="{width_px * 0.005:.1f}" stroke="#f0f0f0" stroke-width="4" opacity="0.25" stroke-linecap="round" />\n'
 
-    f'  <g transform="translate(420, 0)">\n'
+    f'  <g transform="translate({col3_gap:.1f}, 0)">\n'
     f'    <text>\n'
-    f'      <tspan font-weight="bold" font-size="55">{hike_count}</tspan><tspan xml:space="preserve"> Hikes   </tspan>\n'
-    f'      <tspan font-weight="bold" font-size="55">{hike_dist_km:.1f}</tspan><tspan xml:space="preserve"> km</tspan>\n'
+    f'      <tspan font-weight="bold" font-size="{f_large:.1f}">{hike_count}</tspan><tspan xml:space="preserve"> Hikes   </tspan>\n'
+    f'      <tspan font-weight="bold" font-size="{f_large:.1f}">{hike_dist_km:.1f}</tspan><tspan xml:space="preserve"> km</tspan>\n'
     f'    </text>\n'
     f'  </g>\n'
 
-    # --- 第二行: BPM, Elev (合并为单行，高度整体上提) ---
-    f'  <g transform="translate(-210, 120)">\n'
+    # --- 第二行: BPM, Elev ---
+    f'  <g transform="translate(-{col2_gap:.1f}, {row2_y:.1f})">\n'
     f'    <text>\n'
-    f'      <tspan font-weight="bold" font-size="55">{int(total_avg_hr)}</tspan><tspan xml:space="preserve"> BPM   </tspan>\n'
-    f'      <tspan font-size="45" opacity="0.9">Avg Heart Rate</tspan>\n'
+    f'      <tspan font-weight="bold" font-size="{f_large:.1f}">{int(total_avg_hr)}</tspan><tspan xml:space="preserve"> BPM   </tspan>\n'
+    f'      <tspan opacity="0.9">Avg Heart Rate</tspan>\n'
     f'    </text>\n'
     f'  </g>\n'
 
-    # 分割线 3
-    f'  <line x1="0" y1="75" x2="0" y2="135" stroke="#f0f0f0" stroke-width="4" opacity="0.25" stroke-linecap="round" />\n'
+    f'  <line x1="0" y1="{row2_y - width_px * 0.015:.1f}" x2="0" y2="{row2_y + width_px * 0.008:.1f}" stroke="#f0f0f0" stroke-width="4" opacity="0.25" stroke-linecap="round" />\n'
 
-    f'  <g transform="translate(210, 120)">\n'
+    f'  <g transform="translate({col2_gap:.1f}, {row2_y:.1f})">\n'
     f'    <text>\n'
-    f'      <tspan font-weight="bold" font-size="55">{int(total_elev_g)}</tspan><tspan xml:space="preserve"> m   </tspan>\n'
-    f'      <tspan font-size="45" opacity="0.9">Elevation Gain</tspan>\n'
+    f'      <tspan font-weight="bold" font-size="{f_large:.1f}">{int(total_elev_g)}</tspan><tspan xml:space="preserve"> m   </tspan>\n'
+    f'      <tspan opacity="0.9">Elevation Gain</tspan>\n'
     f'    </text>\n'
     f'  </g>\n'
 
-    # --- 第三行: Total 汇总 (高度整体上提) ---
-    f'  <g transform="translate(0, 240)">\n'
+    # --- 第三行: Total 汇总 ---
+    f'  <g transform="translate(0, {row3_y:.1f})">\n'
     f'    <text>\n'
-    f'      <tspan font-weight="bold" font-size="55">{total_count}</tspan><tspan xml:space="preserve"> Workouts Total </tspan><tspan font-weight="bold" font-size="55">{total_dist_km:.1f}</tspan><tspan xml:space="preserve"> km / </tspan><tspan font-weight="bold" font-size="55">{total_time_h}</tspan><tspan xml:space="preserve"> h </tspan><tspan font-weight="bold" font-size="55">{total_time_m}</tspan><tspan xml:space="preserve"> min</tspan>\n'
+    f'      <tspan font-weight="bold" font-size="{f_large:.1f}">{total_count}</tspan><tspan xml:space="preserve"> Workouts Total </tspan><tspan font-weight="bold" font-size="{f_large:.1f}">{total_dist_km:.1f}</tspan><tspan xml:space="preserve"> km / </tspan><tspan font-weight="bold" font-size="{f_large:.1f}">{total_time_h}</tspan><tspan xml:space="preserve"> h </tspan><tspan font-weight="bold" font-size="{f_large:.1f}">{total_time_m}</tspan><tspan xml:space="preserve"> min</tspan>\n'
     f'    </text>\n'
     f'  </g>\n'
     f'</g>\n'
