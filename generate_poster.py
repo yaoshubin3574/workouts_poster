@@ -15,6 +15,26 @@ parser.add_argument('--city', type=str, required=True, help="城市")
 parser.add_argument('--province', type=str, required=True, help="省份")
 args = parser.parse_args()
 
+# --- 💥 核心修复：强大的时间与数字安全解析器 💥 ---
+def parse_time(val):
+    if val is None: return 0.0
+    if isinstance(val, (int, float)): return float(val)
+    val_str = str(val).strip()
+    # 截取掉前面可能的日期 (例如 '1970-01-01 00:24:01' -> '00:24:01')
+    if ' ' in val_str: val_str = val_str.split(' ')[-1]
+    try:
+        parts = val_str.split(':')
+        if len(parts) == 3: return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+        elif len(parts) == 2: return float(parts[0]) * 60 + float(parts[1])
+        return float(val_str)
+    except ValueError: return 0.0
+
+def safe_float(val):
+    if val is None: return 0.0
+    try: return float(val)
+    except ValueError: return 0.0
+# ------------------------------------------------
+
 # --- Polyline 解密 ---
 def decode_polyline(polyline_str):
     if not polyline_str: return []
@@ -31,10 +51,8 @@ def decode_polyline(polyline_str):
                 shift += 5
                 if not byte >= 0x20:
                     break
-            if (result & 1):
-                changes[unit] = ~(result >> 1)
-            else:
-                changes[unit] = (result >> 1)
+            if (result & 1): changes[unit] = ~(result >> 1)
+            else: changes[unit] = (result >> 1)
         lat += changes['latitude']
         lng += changes['longitude']
         coordinates.append([lng / 100000.0, lat / 100000.0])
@@ -43,10 +61,8 @@ def decode_polyline(polyline_str):
 # --- 距离计算 ---
 def haversine(lon1, lat1, lon2, lat2):
     R = 6371000
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    delta_phi = math.radians(lat2 - lat1)
-    delta_lambda = math.radians(lon2 - lon1)
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    delta_phi, delta_lambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
     a = math.sin(delta_phi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2)**2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
@@ -88,19 +104,21 @@ with duckdb.connect() as conn:
     try:
         raw_rows = conn.execute(sql).fetchall()
         clean_rows = []
+        # 使用安全解析器，强制转换为纯 Python float，彻底断绝运算崩溃可能
         for r in raw_rows:
             clean_rows.append((
-                r[0], r[1],
-                float(r[2] if r[2] is not None else 0.0),
-                float(r[3] if r[3] is not None else 0.0),
-                float(r[4] if r[4] is not None else 0.0),
-                float(r[5] if r[5] is not None else 0.0)
+                str(r[0]), str(r[1]),
+                safe_float(r[2]),
+                parse_time(r[3]),
+                safe_float(r[4]),
+                safe_float(r[5])
             ))
         raw_rows = clean_rows
     except Exception as e:
         print(f"⚠️ 读取统计数据失败 ({e})，部分数据可能显示为0。")
-        fallback_sql = "SELECT summary_polyline, type, 0.0, 0.0, 0.0, 0.0 FROM read_parquet('data.parquet') WHERE summary_polyline IS NOT NULL"
-        raw_rows = conn.execute(fallback_sql).fetchall()
+        fallback_sql = "SELECT summary_polyline, type FROM read_parquet('data.parquet') WHERE summary_polyline IS NOT NULL"
+        fallback_rows = conn.execute(fallback_sql).fetchall()
+        raw_rows = [(str(r[0]), str(r[1]), 0.0, 0.0, 0.0, 0.0) for r in fallback_rows]
 
 print("步骤 3/3：注入矢量轨迹与统计面板...")
 
@@ -189,7 +207,6 @@ svg_injection_lines.append('</g>')
 with open(result.files[0], 'r', encoding='utf-8') as f:
     svg_content = f.read()
 
-# 去水印
 for block in re.findall(r'<text\b.*?</text>', svg_content, flags=re.IGNORECASE | re.DOTALL):
     if args.city not in block and args.province not in block:
         svg_content = svg_content.replace(block, '')
@@ -227,7 +244,6 @@ def tweak_prov(match):
 svg_content = re.sub(rf'<text\b[^>]*>{args.province}</text>', tweak_prov, svg_content)
 svg_content = re.sub(r'<line\b[^>]*>', lambda m: add_translate(m.group(0)), svg_content)
 
-# 💥 核心修复：全部改用三引号，彻底免疫网页断行报错 💥
 sigma_icon = """<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15.5h-2v-2h2v2zm0-4.5h-2v-2h2v2zm0-4.5h-2v-2h2v2zm0-4.5h-2v-2h2v2zm2-2.5h-4v-2h4v2zm2 2.5h-2v-2h2v2z" fill="#f0f0f0"/>"""
 run_icon = """<path d="M12.5,21.5L10.5,19.5L10.5,14.5L12.5,12.5L14.5,14.5L14.5,19.5L12.5,21.5z M13,22.5L12,21.5L13,20.5L14,21.5L13,22.5z M12,11.5L10,9.5L10,4.5L12,2.5L14,4.5L14,9.5L12,11.5z M12.5,10.5L11.5,9.5L11.5,4.5L12.5,3.5L13.5,4.5L13.5,9.5L12.5,10.5z M16.5,13.5L14.5,11.5L14.5,6.5L16.5,4.5L18.5,6.5L18.5,11.5L16.5,13.5z M17,14.5L16,13.5L17,12.5L18,13.5L17,14.5z" fill="#FC4C02"/>"""
 ride_icon = """<path d="M15.5 2.5a.5.5 0 01.5-.5h2a.5.5 0 010 1h-2a.5.5 0 01-.5-.5zM12.5 1.5a.5.5 0 01.5-.5h1.5a.5.5 0 010 1H13a.5.5 0 01-.5-.5zM19.5 4a.5.5 0 01-.5-.5v-.5a.5.5 0 011 0v.5a.5.5 0 01-.5.5zM18.5 7a.5.5 0 01-.5-.5v-1a.5.5 0 011 0v1a.5.5 0 01-.5.5zM16.5 11.5c.343.343.343.899 0 1.242a.5.5 0 010-.707c.343-.343.343.899 0-1.242a.5.5 0 01-.707.707c.343.343.343.899 0 1.242a.5.5 0 01.707-.707zM17.5 13a.5.5 0 01-.5-.5v-.5a.5.5 0 011 0v.5a.5.5 0 01-.5.5zM11.5 17c.343.343.343.899 0 1.242a.5.5 0 010-.707c.343-.343.343.899 0-1.242a.5.5 0 01-.707.707c.343.343.343.899 0 1.242a.5.5 0 01.707-.707zM10.5 18a.5.5 0 01-.5-.5v-.5a.5.5 0 011 0v.5a.5.5 0 01-.5.5zM8.5 19.5a.5.5 0 01-.5-.5v-.5a.5.5 0 011 0v.5a.5.5 0 01-.5.5zM6.5 20a.5.5 0 01-.5-.5v-.5a.5.5 0 011 0v.5a.5.5 0 01-.5.5zM4.5 19.5a.5.5 0 01-.5-.5v-.5a.5.5 0 011 0v.5a.5.5 0 01-.5.5zM2.5 18a.5.5 0 01-.5-.5v-.5a.5.5 0 011 0v.5a.5.5 0 01-.5.5zM1.5 17c.343.343.343.899 0 1.242a.5.5 0 010-.707c.343-.343.343.899 0-1.242a.5.5 0 01-.707.707c.343.343.343.899 0 1.242a.5.5 0 01.707-.707z" fill="#00DFD8"/>"""
@@ -236,7 +252,6 @@ walk_icon = """<path d="M12.5 21.5l-2.001-2.001V14.5l2.001-2.001v-1l1 1-1-1 1-1L
 heart_icon = """<path d="M12.5 21.5a5.501 5.501 0 005.5-5.5 5.501 5.501 0 00-5.5-5.5 5.501 5.501 0 00-5.5 5.5 5.501 5.501 0 005.5 5.5z M13 18a.5.5 0 01-.5-.5V16a.5.5 0 011 0v1.5a.5.5 0 01-.5.5z" fill="#f0f0f0"/>"""
 elev_icon = """<path d="M12.5 1.5a.5.5 0 01.5-.5h2a.5.5 0 010 1h-2a.5.5 0 01-.5-.5zM10.5 1.5a.5.5 0 01.5-.5h1.5a.5.5 0 010 1h-1.5a.5.5 0 01-.5-.5zM18.5 4c.343.343.343.899 0 1.242a.5.5 0 010-.707c.343-.343.343-.899 0-1.242a.5.5 0 01-.707.707c.343.343.343.899 0 1.242a.5.5 0 01.707-.707zM17.5 5a.5.5 0 01-.5-.5v-.5a.5.5 0 011 0v.5a.5.5 0 01-.5.5z" fill="#f0f0f0"/>"""
 
-# 安全构建统计块
 stats_block = (
     f'<g id="stats_block" transform="translate({width_px/2:.1f}, {stats_y_pos:.1f})" text-anchor="middle" fill="#f0f0f0" font-family="Arial, Helvetica, sans-serif">\n'
     f'  <g id="stats_items_grid" transform="translate(0, 0)" font-size="20">\n'
