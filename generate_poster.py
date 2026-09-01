@@ -67,7 +67,7 @@ result = generate_poster(
         formats=("svg",), 
         lat=args.lat,  
         lon=args.lon, 
-        title="",        
+        title=args.city,        
         subtitle="",     
         theme="dark",   
         width_cm=21,
@@ -77,7 +77,7 @@ result = generate_poster(
     )
 )
 
-print("步骤 2/3：读取并汇总云端运动数据...")
+print("步骤 2/3：读取并汇总运动数据...")
 
 poster_bounds = result.bounds.poster_bounds
 width_px = result.size.width
@@ -108,7 +108,7 @@ with duckdb.connect() as conn:
         fallback_rows = conn.execute(fallback_sql).fetchall()
         raw_rows = [(str(r[0]), str(r[1]), 0.0, 0.0, 0.0, 0.0) for r in fallback_rows]
 
-print("步骤 3/3：注入矢量轨迹与极简美学排版...")
+print("步骤 3/3：注入轨迹与排版...")
 
 color_map = {
     'Run': '#FC4C02', 'Cycling': '#22C55E', 'Ride': '#22C55E',
