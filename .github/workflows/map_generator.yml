@@ -14,7 +14,7 @@ on:
       distance:
         description: '距离(米)'
         required: true
-        default: '22275'
+        default: '22000'
       city:
         description: '城市名称'
         required: true
@@ -66,7 +66,7 @@ jobs:
     - name: 打包图片提供下载
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ github.event.inputs.city }}-Workouts_Poster
+        name: ${{ github.event.inputs.city }}_Workouts_Poster
         path: |
           Workouts_Poster.svg
           Workouts_Poster.png
