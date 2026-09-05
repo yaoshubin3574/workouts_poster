@@ -6,15 +6,15 @@ on:
       lat:
         description: '中心点纬度'
         required: true
-        default: '35.27972053'
+        default: '35.2856284'
       lon:
         description: '中心点经度'
         required: true
-        default: '113.94888774'
+        default: '113.9313797'
       distance:
         description: '距离(米)'
         required: true
-        default: '10000'
+        default: '22275'
       city:
         description: '城市名称'
         required: true

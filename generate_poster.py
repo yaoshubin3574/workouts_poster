@@ -119,7 +119,6 @@ SELECT
 FROM read_parquet('data.parquet') 
 WHERE summary_polyline IS NOT NULL
 """
-"""
 
 with duckdb.connect() as conn:
     try:
