@@ -61,13 +61,13 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y inkscape
-        inkscape --export-type=png --export-filename=colorful-map.png --export-dpi=300 colorful-map.svg
+        inkscape --export-type=png --export-filename=MAP.png --export-dpi=300 MAP.svg
 
     - name: 打包图片提供下载
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ github.event.inputs.city }}-Colorful-Map
+        name: ${{ github.event.inputs.city }}-MAP
         path: |
-          colorful-map.svg
-          colorful-map.png
+          MAP.svg
+          MAP.png
         retention-days: 1
