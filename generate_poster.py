@@ -1,78 +1,100 @@
 import argparse
-from pathlib import Path
-import duckdb
-import re
 import math
+import re
+from pathlib import Path
+
+import duckdb
 from terraink_py import PosterRequest, generate_poster
 from terraink_py.api import MercatorProjector
 
 parser = argparse.ArgumentParser(description="生成运动轨迹海报")
-parser.add_argument('--lat', type=float, required=True, help="中心点纬度")
-parser.add_argument('--lon', type=float, required=True, help="中心点经度")
-parser.add_argument('--distance', type=int, required=True, help="范围(米)")
-parser.add_argument('--city', type=str, required=True, help="城市")
+parser.add_argument("--lat", type=float, required=True, help="中心点纬度")
+parser.add_argument("--lon", type=float, required=True, help="中心点经度")
+parser.add_argument("--distance", type=int, required=True, help="范围(米)")
+parser.add_argument("--city", type=str, required=True, help="城市")
 args = parser.parse_args()
 
+
 def parse_time(val):
-    if val is None: return 0.0
-    if isinstance(val, (int, float)): return float(val)
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
     val_str = str(val).strip()
-    if ' ' in val_str: val_str = val_str.split(' ')[-1]
+    if " " in val_str:
+        val_str = val_str.split(" ")[-1]
     try:
-        parts = val_str.split(':')
-        if len(parts) == 3: return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
-        elif len(parts) == 2: return float(parts[0]) * 60 + float(parts[1])
+        parts = val_str.split(":")
+        if len(parts) == 3:
+            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+        elif len(parts) == 2:
+            return float(parts[0]) * 60 + float(parts[1])
         return float(val_str)
-    except ValueError: return 0.0
+    except ValueError:
+        return 0.0
+
 
 def safe_float(val):
-    if val is None: return 0.0
-    try: return float(val)
-    except ValueError: return 0.0
+    if val is None:
+        return 0.0
+    try:
+        return float(val)
+    except ValueError:
+        return 0.0
+
 
 def decode_polyline(polyline_str):
-    if not polyline_str: return []
+    if not polyline_str:
+        return []
     index, lat, lng = 0, 0, 0
     coordinates = []
-    changes = {'latitude': 0, 'longitude': 0}
+    changes = {"latitude": 0, "longitude": 0}
     while index < len(polyline_str):
-        for unit in ['latitude', 'longitude']:
+        for unit in ["latitude", "longitude"]:
             shift, result = 0, 0
             while True:
                 byte = ord(polyline_str[index]) - 63
                 index += 1
-                result |= (byte & 0x1f) << shift
+                result |= (byte & 0x1F) << shift
                 shift += 5
-                if not byte >= 0x20: break
-            if (result & 1): changes[unit] = ~(result >> 1)
-            else: changes[unit] = (result >> 1)
-        lat += changes['latitude']
-        lng += changes['longitude']
+                if not byte >= 0x20:
+                    break
+            if result & 1:
+                changes[unit] = ~(result >> 1)
+            else:
+                changes[unit] = result >> 1
+        lat += changes["latitude"]
+        lng += changes["longitude"]
         coordinates.append([lng / 100000.0, lat / 100000.0])
     return coordinates
+
 
 def haversine(lon1, lat1, lon2, lat2):
     R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     delta_phi, delta_lambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    a = math.sin(delta_phi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2)**2
+    a = (
+        math.sin(delta_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
+
 
 print(f"步骤 1/3：正在生成 {args.distance}m 范围的基础地图...")
 
 result = generate_poster(
     PosterRequest(
         output=Path("./base-map"),
-        formats=("svg",), 
-        lat=args.lat,  
-        lon=args.lon, 
-        title=args.city,        
-        subtitle="",     
-        theme="dark",   
+        formats=("svg",),
+        lat=args.lat,
+        lon=args.lon,
+        title=args.city,
+        subtitle="",
+        theme="dark",
         width_cm=21,
-        height_cm=29.7,  
-        distance_m=args.distance, 
+        height_cm=29.7,
+        distance_m=args.distance,
         include_buildings=True,
     )
 )
@@ -83,7 +105,13 @@ poster_bounds = result.bounds.poster_bounds
 width_px = result.size.width
 height_px = result.size.height
 projector = MercatorProjector.from_bounds(poster_bounds, width_px, height_px)
-project_func = getattr(projector, 'project', getattr(projector, 'lat_lon_to_pixel', getattr(projector, 'lon_lat_to_pixel', None)))
+project_func = getattr(
+    projector,
+    "project",
+    getattr(
+        projector, "lat_lon_to_pixel", getattr(projector, "lon_lat_to_pixel", None)
+    ),
+)
 
 sql = """
 SELECT 
@@ -91,16 +119,23 @@ SELECT
 FROM read_parquet('data.parquet') 
 WHERE summary_polyline IS NOT NULL
 """
+"""
 
 with duckdb.connect() as conn:
     try:
         raw_rows = conn.execute(sql).fetchall()
         clean_rows = []
         for r in raw_rows:
-            clean_rows.append((
-                str(r[0]), str(r[1]),
-                safe_float(r[2]), parse_time(r[3]), safe_float(r[4]), safe_float(r[5])
-            ))
+            clean_rows.append(
+                (
+                    str(r[0]),
+                    str(r[1]),
+                    safe_float(r[2]),
+                    parse_time(r[3]),
+                    safe_float(r[4]),
+                    safe_float(r[5]),
+                )
+            )
         raw_rows = clean_rows
     except Exception as e:
         print(f"⚠️ 读取统计数据失败 ({e})，部分数据可能显示为0。")
@@ -111,11 +146,14 @@ with duckdb.connect() as conn:
 print("步骤 3/3：注入轨迹与排版...")
 
 color_map = {
-    'Run': '#FC4C02', 'Cycling': '#22C55E', 'Ride': '#22C55E',
-    'Hike': '#FFC300', 'Walk': '#A855F7'
+    "Run": "#FC4C02",
+    "Cycling": "#22C55E",
+    "Ride": "#22C55E",
+    "Hike": "#FFC300",
+    "Walk": "#A855F7",
 }
-default_color = '#06D6A0'   
-line_width = max(width_px * 0.0005, 0.75) 
+default_color = "#06D6A0"
+line_width = max(width_px * 0.0005, 0.75)
 
 run_count = ride_count = hike_count = total_count = 0
 run_dist_km = ride_dist_km = hike_dist_km = total_dist_km = 0
@@ -126,24 +164,31 @@ run_routes, other_routes = [], []
 for row in raw_rows:
     poly_str, m_type, dist_m, time_s, avg_hr, elev_g = row
     decoded_points = decode_polyline(poly_str)
-    if not decoded_points or len(decoded_points) < 2: continue
-        
+    if not decoded_points or len(decoded_points) < 2:
+        continue
+
     in_region = False
     for point in decoded_points:
         if haversine(point[0], point[1], args.lon, args.lat) <= args.distance:
             in_region = True
             break
-            
-    if not in_region: continue
 
-    if m_type == 'Run':
+    if not in_region:
+        continue
+
+    if m_type == "Run":
         run_routes.append((decoded_points, m_type))
-        run_count += 1; run_dist_km += dist_m / 1000.0
+        run_count += 1
+        run_dist_km += dist_m / 1000.0
     else:
         other_routes.append((decoded_points, m_type))
-        if m_type in ['Cycling', 'Ride']: ride_count += 1; ride_dist_km += dist_m / 1000.0
-        elif m_type == 'Hike': hike_count += 1; hike_dist_km += dist_m / 1000.0
-            
+        if m_type in ["Cycling", "Ride"]:
+            ride_count += 1
+            ride_dist_km += dist_m / 1000.0
+        elif m_type == "Hike":
+            hike_count += 1
+            hike_dist_km += dist_m / 1000.0
+
     total_count += 1
     total_dist_km += dist_m / 1000.0
     total_elev_g += elev_g
@@ -154,24 +199,37 @@ total_avg_hr = total_weighted_hr / total_time_s if total_time_s > 0 else 0
 total_time_h = int(total_time_s // 3600)
 total_time_m = int((total_time_s % 3600) // 60)
 
-svg_injection_lines = ['<g id="my_custom_tracks" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">']
+svg_injection_lines = [
+    '<g id="my_custom_tracks" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">'
+]
+
 
 def add_route_to_svg(lon_lat_list, m_type):
     pixel_points = []
     for point in lon_lat_list:
         lon, lat = point[0], point[1]
-        x, y = project_func(lat, lon) if project_func.__name__ == 'lat_lon_to_pixel' else project_func(lon, lat)
+        x, y = (
+            project_func(lat, lon)
+            if project_func.__name__ == "lat_lon_to_pixel"
+            else project_func(lon, lat)
+        )
         pixel_points.append(f"{x:.1f},{y:.1f}")
     color = color_map.get(m_type, default_color)
     pts_str = " ".join(pixel_points)
-    svg_injection_lines.append(f'  <polyline points="{pts_str}" stroke="{color}" stroke-width="{line_width:.1f}" />')
+    svg_injection_lines.append(
+        f'  <polyline points="{pts_str}" stroke="{color}" stroke-width="{line_width:.1f}" />'
+    )
 
-for r, t in other_routes: add_route_to_svg(r, t)
-for r, t in run_routes: add_route_to_svg(r, t)
-svg_injection_lines.append('</g>')
 
-with open(result.files[0], 'r', encoding='utf-8') as f:
+for r, t in other_routes:
+    add_route_to_svg(r, t)
+for r, t in run_routes:
+    add_route_to_svg(r, t)
+svg_injection_lines.append("</g>")
+
+with open(result.files[0], "r", encoding="utf-8") as f:
     svg_content = f.read()
+
 
 # ==========================================
 # 💥 1. 黑白反转滤镜：纯黑背景 + 提亮的灰色路网 💥
@@ -180,39 +238,45 @@ def color_to_gray(match):
     val = match.group(1)
     try:
         if len(val) == 3:
-            r, g, b = int(val[0], 16)*17, int(val[1], 16)*17, int(val[2], 16)*17
+            r, g, b = int(val[0], 16) * 17, int(val[1], 16) * 17, int(val[2], 16) * 17
         else:
             r, g, b = int(val[0:2], 16), int(val[2:4], 16), int(val[4:6], 16)
         lum = 0.299 * r + 0.587 * g + 0.114 * b
-        
+
         # 判断：如果原色是暗色背景，变成极致纯黑 #000000
         # 如果原色是道路建筑，变成提亮的灰色 #444444 (原为 #2a2a2a)
         if lum < 35:
-            return '#000000'
+            return "#000000"
         else:
-            return '#444444'
+            return "#444444"
     except:
-        return f'#{val}'
+        return f"#{val}"
+
 
 def rgb_to_gray(match):
     try:
         r, g, b = int(match.group(1)), int(match.group(2)), int(match.group(3))
         lum = 0.299 * r + 0.587 * g + 0.114 * b
         if lum < 35:
-            return 'rgb(0,0,0)'
+            return "rgb(0,0,0)"
         else:
-            return 'rgb(68,68,68)' # #444444 的 RGB 值
+            return "rgb(68,68,68)"  # #444444 的 RGB 值
     except:
         return match.group(0)
 
-svg_content = re.sub(r'#([a-fA-F0-9]{6}|[a-fA-F0-9]{3})\b', color_to_gray, svg_content)
-svg_content = re.sub(r'rgb\((\d+),\s*(\d+),\s*(\d+)\)', rgb_to_gray, svg_content)
+
+svg_content = re.sub(r"#([a-fA-F0-9]{6}|[a-fA-F0-9]{3})\b", color_to_gray, svg_content)
+svg_content = re.sub(r"rgb\((\d+),\s*(\d+),\s*(\d+)\)", rgb_to_gray, svg_content)
 
 # 净化底层：一键抹除所有原生遮罩、文字和线条
-svg_content = re.sub(r'<defs>.*?</defs>', '', svg_content, flags=re.IGNORECASE | re.DOTALL)
-svg_content = re.sub(r'\s*mask="[^"]+"', '', svg_content, flags=re.IGNORECASE)
-svg_content = re.sub(r'<text\b.*?</text>', '', svg_content, flags=re.IGNORECASE | re.DOTALL)
-svg_content = re.sub(r'<line\b.*?>', '', svg_content, flags=re.IGNORECASE | re.DOTALL)
+svg_content = re.sub(
+    r"<defs>.*?</defs>", "", svg_content, flags=re.IGNORECASE | re.DOTALL
+)
+svg_content = re.sub(r'\s*mask="[^"]+"', "", svg_content, flags=re.IGNORECASE)
+svg_content = re.sub(
+    r"<text\b.*?</text>", "", svg_content, flags=re.IGNORECASE | re.DOTALL
+)
+svg_content = re.sub(r"<line\b.*?>", "", svg_content, flags=re.IGNORECASE | re.DOTALL)
 
 
 # ==========================================
@@ -220,13 +284,13 @@ svg_content = re.sub(r'<line\b.*?>', '', svg_content, flags=re.IGNORECASE | re.D
 # ==========================================
 text_color_fg = "#f0f0f0"
 
-city_y_pos = height_px * 0.85       
-stats_y_pos = height_px * 0.885     
-row2_y = height_px * 0.027          
-row3_y = height_px * 0.053          
+city_y_pos = height_px * 0.85
+stats_y_pos = height_px * 0.885
+row2_y = height_px * 0.027
+row3_y = height_px * 0.053
 
-f_large = width_px * 0.022          
-f_small = width_px * 0.018          
+f_large = width_px * 0.022
+f_small = width_px * 0.018
 
 # 渲染城市标题
 city_letter_spacing = f"{width_px * 0.045:.1f}"
@@ -239,10 +303,10 @@ pipe_str = f'<tspan xml:space="preserve" fill="{text_color_fg}" opacity="0.25" f
 row1_text = (
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{run_count}</tspan><tspan xml:space="preserve"> Runs </tspan>'
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{run_dist_km:.1f}</tspan><tspan xml:space="preserve"> km</tspan>'
-    f'{pipe_str}'
+    f"{pipe_str}"
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{ride_count}</tspan><tspan xml:space="preserve"> Rides </tspan>'
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{ride_dist_km:.1f}</tspan><tspan xml:space="preserve"> km</tspan>'
-    f'{pipe_str}'
+    f"{pipe_str}"
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{hike_count}</tspan><tspan xml:space="preserve"> Hikes </tspan>'
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{hike_dist_km:.1f}</tspan><tspan xml:space="preserve"> km</tspan>'
 )
@@ -250,7 +314,7 @@ row1_text = (
 # 第二行
 row2_text = (
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{int(total_avg_hr)}</tspan><tspan xml:space="preserve"> BPM Avg Heart Rate</tspan>'
-    f'{pipe_str}'
+    f"{pipe_str}"
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{int(total_elev_g)}</tspan><tspan xml:space="preserve"> m Elevation Gain</tspan>'
 )
 
@@ -264,25 +328,21 @@ row3_text = (
 
 # 将三行文本组合成块
 stats_block = (
-    f'<g id="stats_block" transform="translate({width_px/2:.1f}, {stats_y_pos:.1f})" fill="{text_color_fg}" font-family="Arial, Helvetica, sans-serif" font-size="{f_small:.1f}" text-anchor="middle">\n'
+    f'<g id="stats_block" transform="translate({width_px / 2:.1f}, {stats_y_pos:.1f})" fill="{text_color_fg}" font-family="Arial, Helvetica, sans-serif" font-size="{f_small:.1f}" text-anchor="middle">\n'
     f'  <text transform="translate(0, 0)">{row1_text}</text>\n'
     f'  <text transform="translate(0, {row2_y:.1f})">{row2_text}</text>\n'
     f'  <text transform="translate(0, {row3_y:.1f})">{row3_text}</text>\n'
-    f'</g>\n'
+    f"</g>\n"
 )
 
 # 最终注入
-final_injection = [
-    "\n".join(svg_injection_lines),
-    city_title_block,
-    stats_block
-]
+final_injection = ["\n".join(svg_injection_lines), city_title_block, stats_block]
 
 if "</svg>" in svg_content:
     svg_content = svg_content.replace("</svg>", "\n".join(final_injection) + "\n</svg>")
 
-final_path = "colorful-map.svg"
-with open(final_path, 'w', encoding='utf-8') as f:
+final_path = "Workouts_Poster.svg"
+with open(final_path, "w", encoding="utf-8") as f:
     f.write(svg_content)
 
 print(f"\n大功告成！路网已提亮的海报已生成：{final_path}")
