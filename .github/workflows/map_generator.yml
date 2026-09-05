@@ -70,4 +70,4 @@ jobs:
         path: |
           Workouts_Poster.svg
           Workouts_Poster.png
-        retention-days: 1
+        retention-days: 7
