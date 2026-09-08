@@ -15,6 +15,23 @@ parser.add_argument("--city", type=str, required=True, help="城市")
 args = parser.parse_args()
 
 
+def to_dms(deg, is_lat=True):
+    """将十进制经纬度转换为度分秒 (DMS) 格式"""
+    direction = ("N" if deg >= 0 else "S") if is_lat else ("E" if deg >= 0 else "W")
+    deg = abs(deg)
+    d = int(deg)
+    m_float = (deg - d) * 60
+    m = int(m_float)
+    s = round((m_float - m) * 60)
+    if s == 60:
+        s = 0
+        m += 1
+    if m == 60:
+        m = 0
+        d += 1
+    return f"{d}°{m:02d}'{s:02d}\" {direction}"
+
+
 def parse_time(val):
     if val is None:
         return 0.0
@@ -287,17 +304,24 @@ svg_content = re.sub(r"<line\b.*?>", "", svg_content, flags=re.IGNORECASE | re.D
 # ==========================================
 text_color_fg = "#f0f0f0"
 
-city_y_pos = height_px * 0.85
-stats_y_pos = height_px * 0.885
+city_y_pos = height_px * 0.84
+coord_y_pos = height_px * 0.865
+stats_y_pos = height_px * 0.892
 row2_y = height_px * 0.027
 row3_y = height_px * 0.053
 
 f_large = width_px * 0.022
 f_small = width_px * 0.018
+f_coord = width_px * 0.014
 
 # 渲染城市标题
 city_letter_spacing = f"{width_px * 0.045:.1f}"
 city_title_block = f'<text x="{width_px / 2:.1f}" y="{city_y_pos:.1f}" font-family="Arial, Helvetica, sans-serif" font-size="{width_px * 0.06:.1f}" font-weight="bold" fill="{text_color_fg}" xml:space="preserve" letter-spacing="{city_letter_spacing}" text-anchor="middle" opacity="0.9">{args.city.upper()}</text>\n'
+
+# 渲染度分秒格式中心点经纬度坐标
+coord_str = f"{to_dms(args.lat, is_lat=True)}   /   {to_dms(args.lon, is_lat=False)}"
+coord_letter_spacing = f"{width_px * 0.005:.1f}"
+coord_block = f'<text x="{width_px / 2:.1f}" y="{coord_y_pos:.1f}" font-family="Arial, Helvetica, sans-serif" font-size="{f_coord:.1f}" fill="{text_color_fg}" xml:space="preserve" letter-spacing="{coord_letter_spacing}" text-anchor="middle" opacity="0.65">{coord_str}</text>\n'
 
 # 内联的竖线分隔符
 pipe_str = f'<tspan xml:space="preserve" fill="{text_color_fg}" opacity="0.25" font-size="{f_large * 1.1:.1f}">   |   </tspan>'
@@ -339,7 +363,12 @@ stats_block = (
 )
 
 # 最终注入
-final_injection = ["\n".join(svg_injection_lines), city_title_block, stats_block]
+final_injection = [
+    "\n".join(svg_injection_lines),
+    city_title_block,
+    coord_block,
+    stats_block,
+]
 
 if "</svg>" in svg_content:
     svg_content = svg_content.replace("</svg>", "\n".join(final_injection) + "\n</svg>")
