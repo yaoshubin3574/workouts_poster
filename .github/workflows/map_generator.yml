@@ -3,22 +3,37 @@ name: Workouts Poster Generator
 on:
   workflow_dispatch:
     inputs:
-      lat:
-        description: '中心点纬度'
+      preset:
+        description: '📍 预设城市 (选择后直接运行；或选 CUSTOM 手动输入)'
         required: true
-        default: '35.2856284'
-      lon:
-        description: '中心点经度'
-        required: true
-        default: '113.9313797'
-      distance:
-        description: '距离(米)'
-        required: true
-        default: '20000'
+        type: choice
+        default: 'HANGZHOU (4.6km)'
+        options:
+          - 'HANGZHOU (4.6km)'
+          - 'XINXIANG (20km)'
+          - 'JIAOZUO (13km)'
+          - 'JINHUA (6.6km)'
+          - 'TAIZHOU-2200 (2.2km)'
+          - 'TAIZHOU-2000 (2.0km)'
+          - 'NINGBO (8km)'
+          - 'HENAN (65km)'
+          - 'CUSTOM (手动输入下方参数)'
       city:
-        description: '城市名称'
-        required: true
-        default: 'XINXIANG'
+        description: '城市名称 (仅 CUSTOM 模式必填，预设模式请留空)'
+        required: false
+        default: ''
+      lat:
+        description: '中心点纬度 (仅 CUSTOM 模式必填，预设模式请留空)'
+        required: false
+        default: ''
+      lon:
+        description: '中心点经度 (仅 CUSTOM 模式必填，预设模式请留空)'
+        required: false
+        default: ''
+      distance:
+        description: '距离/米 (仅 CUSTOM 模式必填，或用于覆写预设范围)'
+        required: false
+        default: ''
 
 jobs:
   build_map:
@@ -36,6 +51,51 @@ jobs:
       with:
         python-version: '3.12'
 
+    - name: ⚙️ 解析运行参数 (预设或手动)
+      run: |
+        python - << 'EOF'
+        import os
+
+        preset = "${{ github.event.inputs.preset }}".strip()
+        custom_city = "${{ github.event.inputs.city }}".strip()
+        custom_lat = "${{ github.event.inputs.lat }}".strip()
+        custom_lon = "${{ github.event.inputs.lon }}".strip()
+        custom_dist = "${{ github.event.inputs.distance }}".strip()
+
+        # CSV 中的内置预设数据库
+        presets = {
+            'XINXIANG (20km)':      {'city': 'XINXIANG', 'distance': '20000', 'lon': '113.9313797', 'lat': '35.2856284'},
+            'JIAOZUO (13km)':       {'city': 'JIAOZUO',  'distance': '13000', 'lon': '113.2526282', 'lat': '35.1946971'},
+            'JINHUA (6.6km)':       {'city': 'JINHUA',   'distance': '6600',  'lon': '119.5345237', 'lat': '29.1160378'},
+            'TAIZHOU-2200 (2.2km)': {'city': 'TAIZHOU',  'distance': '2200',  'lon': '121.2226776', 'lat': '28.9152824'},
+            'TAIZHOU-2000 (2.0km)': {'city': 'TAIZHOU',  'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
+            'NINGBO (8km)':         {'city': 'NINGBO',   'distance': '8000',  'lon': '121.4667517', 'lat': '29.5165939'},
+            'HANGZHOU (4.6km)':     {'city': 'HANGZHOU', 'distance': '4600',  'lon': '120.1390416', 'lat': '30.2250866'},
+            'HENAN (65km)':         {'city': 'HENAN',    'distance': '65000', 'lon': '113.6178735', 'lat': '35.1197434'},
+        }
+
+        if preset in presets and not preset.startswith('CUSTOM'):
+            data = presets[preset]
+            city = custom_city if custom_city else data['city']
+            lat = custom_lat if custom_lat else data['lat']
+            lon = custom_lon if custom_lon else data['lon']
+            dist = custom_dist if custom_dist else data['distance']
+            print(f"👉 采用预设配置 [{preset}]: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
+        else:
+            if not (custom_city and custom_lat and custom_lon and custom_dist):
+                raise ValueError("❌ 选择 CUSTOM 模式时，必须完整填写 city, lat, lon, distance 四个参数！")
+            city, lat, lon, dist = custom_city, custom_lat, custom_lon, custom_dist
+            print(f"👉 采用自定义配置: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
+
+        # 写入环境变量，供后续 Step 和 Artifacts 使用
+        env_file = os.getenv('GITHUB_ENV')
+        with open(env_file, 'a', encoding='utf-8') as f:
+            f.write(f"CITY={city}\n")
+            f.write(f"LAT={lat}\n")
+            f.write(f"LON={lon}\n")
+            f.write(f"DISTANCE={dist}\n")
+        EOF
+
     - name: 安装依赖
       run: |
         python -m pip install --upgrade pip
@@ -51,11 +111,10 @@ jobs:
     - name: 生成 SVG 海报
       run: |
         python generate_poster.py \
-          --lat ${{ github.event.inputs.lat }} \
-          --lon ${{ github.event.inputs.lon }} \
-          --distance ${{ github.event.inputs.distance }} \
-          --city "${{ github.event.inputs.city }}"
-
+          --lat $LAT \
+          --lon $LON \
+          --distance $DISTANCE \
+          --city "$CITY"
 
     - name: 渲染 300ppi PNG
       run: |
@@ -66,8 +125,9 @@ jobs:
     - name: 打包图片提供下载
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ github.event.inputs.city }}_Workouts_Poster
+        name: ${{ env.CITY }}-Workouts_Poster
         path: |
           Workouts_Poster.svg
           Workouts_Poster.png
+        if-no-files-found: error
         retention-days: 7
