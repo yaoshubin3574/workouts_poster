@@ -152,7 +152,7 @@ color_map = {
     "Walk": "#A855F7",
 }
 default_color = "#06D6A0"
-line_width = max(width_px * 0.0005, 0.75)
+line_width = max(width_px * 0.0010, 0.75)
 
 run_count = ride_count = hike_count = total_count = 0
 run_dist_km = ride_dist_km = hike_dist_km = total_dist_km = 0
@@ -231,41 +231,45 @@ with open(result.files[0], "r", encoding="utf-8") as f:
 
 
 # ==========================================
-# 💥 1. 黑白反转滤镜：纯黑背景 + 提亮的灰色路网 💥
+# 💥 1. 精细化黑夜暗金滤镜（按图层精准着色） 💥
 # ==========================================
-def color_to_gray(match):
-    val = match.group(1)
+THEME_COLOR_MAP = {
+    # 陆地底色 -> 纯黑
+    "#0a1628": "#000000",
+    # 水系-> 深邃水体蓝
+    "#061020": "#152b42",
+    # 山体、林地、自然公园）-> 沉稳墨绿
+    "#0f2235": "#15261c",
+    # 建筑物面要素 -> 极暗微弱灰（消除市区高亮白斑噪声）
+    "#6e5a45": "#181a1d",
+    # 主干道 / 高速路 -> 适度结构的雅致灰
+    "#c99c37": "#3d424a",
+    # 次干道 -> 暗灰色
+    "#8a6820": "#282a30",
+    # 支路与步道 -> 极暗灰微弱纹理
+    "#333530": "#1e2024",
+    "#272c2e": "#1c1d21",
+    "#414033": "#1e2024",
+    "#4f4b36": "#141517",
+}
+
+
+def smart_color_mapper(match):
+    hex_color = match.group(0).lower()
+    if hex_color in THEME_COLOR_MAP:
+        return THEME_COLOR_MAP[hex_color]
+    # 其余未知颜色做兜底调暗
     try:
-        if len(val) == 3:
-            r, g, b = int(val[0], 16) * 17, int(val[1], 16) * 17, int(val[2], 16) * 17
-        else:
-            r, g, b = int(val[0:2], 16), int(val[2:4], 16), int(val[4:6], 16)
+        val = hex_color.lstrip("#")
+        r, g, b = (int(val[i : i + 2], 16) for i in (0, 2, 4))
         lum = 0.299 * r + 0.587 * g + 0.114 * b
-
-        # 判断：如果原色是暗色背景，变成极致纯黑 #000000
-        # 如果原色是道路建筑，变成提亮的灰色 #444444 (原为 #2a2a2a)
-        if lum < 35:
-            return "#000000"
-        else:
-            return "#444444"
-    except:
-        return f"#{val}"
-
-
-def rgb_to_gray(match):
-    try:
-        r, g, b = int(match.group(1)), int(match.group(2)), int(match.group(3))
-        lum = 0.299 * r + 0.587 * g + 0.114 * b
-        if lum < 35:
-            return "rgb(0,0,0)"
-        else:
-            return "rgb(68,68,68)"  # #444444 的 RGB 值
+        return "#000000" if lum < 35 else "#25282e"
     except:
         return match.group(0)
 
 
-svg_content = re.sub(r"#([a-fA-F0-9]{6}|[a-fA-F0-9]{3})\b", color_to_gray, svg_content)
-svg_content = re.sub(r"rgb\((\d+),\s*(\d+),\s*(\d+)\)", rgb_to_gray, svg_content)
+# 执行精准替换
+svg_content = re.sub(r"#[a-fA-F0-9]{6}\b", smart_color_mapper, svg_content)
 
 # 净化底层：一键抹除所有原生遮罩、文字和线条
 svg_content = re.sub(
