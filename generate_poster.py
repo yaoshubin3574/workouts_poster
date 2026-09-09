@@ -1,33 +1,11 @@
 import argparse
-import io
 import math
 import re
-import sys
-import urllib.request
 from pathlib import Path
 
 import duckdb
-import numpy as np
-from PIL import Image
 from terraink_py import PosterRequest, generate_poster
 from terraink_py.api import MercatorProjector
-
-# 确保 matplotlib 可用（若环境中未安装则自动静默安装，保证运行不报错）
-try:
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-except ImportError:
-    import subprocess
-
-    subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "matplotlib", "--quiet"]
-    )
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser(description="生成运动轨迹海报")
 parser.add_argument("--lat", type=float, required=True, help="中心点纬度")
@@ -101,126 +79,6 @@ def haversine(lon1, lat1, lon2, lat2):
     )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
-
-
-# ==========================================
-# 💥 极简矢量等高线生成函数（代替原平面色块） 💥
-# ==========================================
-def generate_contour_lines(bounds, project_func, distance_m, width_px):
-    """基于全球 DEM 自动计算并生成极简细密矢量等高线"""
-    # 依据范围动态选定高程瓦片层级
-    zoom = (
-        12
-        if distance_m <= 10000
-        else (11 if distance_m <= 30000 else (10 if distance_m <= 70000 else 9))
-    )
-
-    def deg2num(lat_deg, lon_deg, z):
-        lat_rad = math.radians(lat_deg)
-        n = 2.0**z
-        xtile = int((lon_deg + 180.0) / 360.0 * n)
-        ytile = int((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n)
-        return xtile, ytile
-
-    def num2deg(xtile, ytile, z):
-        n = 2.0**z
-        lon_deg = xtile / n * 360.0 - 180.0
-        lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * ytile / n)))
-        return math.degrees(lat_rad), lon_deg
-
-    x_min, y_min = deg2num(bounds.north, bounds.west, zoom)
-    x_max, y_max = deg2num(bounds.south, bounds.east, zoom)
-
-    x_tiles = list(range(x_min, x_max + 1))
-    y_tiles = list(range(y_min, y_max + 1))
-
-    if len(x_tiles) * len(y_tiles) > 25:
-        zoom -= 1
-        x_min, y_min = deg2num(bounds.north, bounds.west, zoom)
-        x_max, y_max = deg2num(bounds.south, bounds.east, zoom)
-        x_tiles = list(range(x_min, x_max + 1))
-        y_tiles = list(range(y_min, y_max + 1))
-
-    tile_w, tile_h = 256, 256
-    full_w = len(x_tiles) * tile_w
-    full_h = len(y_tiles) * tile_h
-    elev_grid = np.zeros((full_h, full_w), dtype=np.float32)
-
-    downloaded = 0
-    for i, x in enumerate(x_tiles):
-        for j, y in enumerate(y_tiles):
-            url = f"https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{zoom}/{x}/{y}.png"
-            req = urllib.request.Request(
-                url, headers={"User-Agent": "WorkoutsPoster/1.0"}
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=4) as resp:
-                    img = Image.open(io.BytesIO(resp.read())).convert("RGB")
-                    arr = np.array(img, dtype=np.float32)
-                    tile_elev = (
-                        arr[:, :, 0] * 256.0 + arr[:, :, 1] + arr[:, :, 2] / 256.0
-                    ) - 32768.0
-                    elev_grid[
-                        j * tile_h : (j + 1) * tile_h, i * tile_w : (i + 1) * tile_w
-                    ] = tile_elev
-                    downloaded += 1
-            except Exception:
-                pass
-
-    if downloaded == 0:
-        return ""
-
-    top_lat, left_lon = num2deg(x_min, y_min, zoom)
-    bot_lat, right_lon = num2deg(x_max + 1, y_max + 1, zoom)
-
-    lons = np.linspace(left_lon, right_lon, full_w)
-    lats = np.linspace(bot_lat, top_lat, full_h)
-    elev_grid = np.flipud(elev_grid)
-
-    min_h = float(elev_grid.min())
-    max_h = float(elev_grid.max())
-    diff = max_h - min_h
-    if diff < 30:
-        return ""
-
-    # 根据地势落差自适应等高距（米）
-    interval = (
-        20 if diff < 150 else (50 if diff < 400 else (100 if diff < 1000 else 200))
-    )
-    start = math.ceil(max(min_h, 10) / interval) * interval
-    levels = np.arange(start, max_h, interval)
-    if len(levels) == 0:
-        return ""
-
-    fig, ax = plt.subplots()
-    cs = ax.contour(lons, lats, elev_grid, levels=levels)
-
-    line_w = max(width_px * 0.00025, 0.45)
-    lines_svg = [
-        '<g id="minimal_contour_lines" fill="none" stroke-linecap="round" stroke-linejoin="round">'
-    ]
-
-    for level, segs in zip(cs.levels, cs.allsegs):
-        is_index = int(level) % (interval * 5) == 0
-        # 极简暗银灰：计曲线（大等高线）稍加深，普通等高线细腻微弱
-        color = "#4a5260" if is_index else "#333842"
-        opacity = 0.45 if is_index else 0.25
-        cur_w = line_w * 1.3 if is_index else line_w
-
-        for seg in segs:
-            if len(seg) < 3:
-                continue
-            pixel_pts = []
-            for pt in seg:
-                px, py = project_func(pt[0], pt[1])
-                pixel_pts.append(f"{px:.1f},{py:.1f}")
-            pts_str = " ".join(pixel_pts)
-            lines_svg.append(
-                f'  <polyline points="{pts_str}" stroke="{color}" stroke-width="{cur_w:.2f}" stroke-opacity="{opacity:.2f}" />'
-            )
-    plt.close(fig)
-    lines_svg.append("</g>")
-    return "\n".join(lines_svg)
 
 
 print(f"步骤 1/3：正在生成 {args.distance}m 范围的基础地图...")
@@ -380,8 +238,8 @@ THEME_COLOR_MAP = {
     "#0a1628": "#000000",
     # 水系-> 深邃水体蓝
     "#061020": "#152b42",
-    # 山体、林地面要素（原平铺色块消除为纯黑，改由极简矢量等高线呈现）
-    "#0f2235": "#000000",
+    # 山体、林地、自然公园）-> 沉稳墨绿
+    "#0f2235": "#0e1813",
     # 建筑物面要素 -> 极暗微弱灰（消除市区高亮白斑噪声）
     "#6e5a45": "#181a1d",
     # 主干道 / 高速路 -> 适度结构的雅致灰
@@ -422,23 +280,6 @@ svg_content = re.sub(
     r"<text\b.*?</text>", "", svg_content, flags=re.IGNORECASE | re.DOTALL
 )
 svg_content = re.sub(r"<line\b.*?>", "", svg_content, flags=re.IGNORECASE | re.DOTALL)
-
-# 💥 将极简等高线注入在黑色陆地之上、水系道路之下
-try:
-    print("🏔️ 正在提取并生成山体极简矢量等高线...")
-    contours_svg = generate_contour_lines(
-        poster_bounds, project_func, args.distance, width_px
-    )
-    if contours_svg:
-        svg_content = re.sub(
-            r'(<rect\b[^>]+width="\d+"[^>]+height="\d+"[^>]*/>)',
-            r"\1\n" + contours_svg,
-            svg_content,
-            count=1,
-        )
-        print("✅ 极简矢量等高线已成功融入底图！")
-except Exception as e:
-    print(f"⚠️ 生成等高线跳过: {e}")
 
 
 # ==========================================
