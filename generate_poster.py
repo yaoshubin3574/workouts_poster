@@ -1,9 +1,9 @@
 import argparse
 import math
 import re
+import xml.etree.ElementTree as ET
+from datetime import datetime
 from pathlib import Path
-
-import duckdb
 
 # =========================================================
 # 🛠️ 补丁：修复 terraink-py 无法正确解析大型水体(西湖/大江大河)的 Bug
@@ -116,60 +116,6 @@ parser.add_argument("--city", type=str, required=True, help="城市")
 args = parser.parse_args()
 
 
-def parse_time(val):
-    if val is None:
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
-    val_str = str(val).strip()
-    if " " in val_str:
-        val_str = val_str.split(" ")[-1]
-    try:
-        parts = val_str.split(":")
-        if len(parts) == 3:
-            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
-        elif len(parts) == 2:
-            return float(parts[0]) * 60 + float(parts[1])
-        return float(val_str)
-    except ValueError:
-        return 0.0
-
-
-def safe_float(val):
-    if val is None:
-        return 0.0
-    try:
-        return float(val)
-    except ValueError:
-        return 0.0
-
-
-def decode_polyline(polyline_str):
-    if not polyline_str:
-        return []
-    index, lat, lng = 0, 0, 0
-    coordinates = []
-    changes = {"latitude": 0, "longitude": 0}
-    while index < len(polyline_str):
-        for unit in ["latitude", "longitude"]:
-            shift, result = 0, 0
-            while True:
-                byte = ord(polyline_str[index]) - 63
-                index += 1
-                result |= (byte & 0x1F) << shift
-                shift += 5
-                if not byte >= 0x20:
-                    break
-            if result & 1:
-                changes[unit] = ~(result >> 1)
-            else:
-                changes[unit] = result >> 1
-        lat += changes["latitude"]
-        lng += changes["longitude"]
-        coordinates.append([lng / 100000.0, lat / 100000.0])
-    return coordinates
-
-
 def haversine(lon1, lat1, lon2, lat2):
     R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
@@ -180,6 +126,126 @@ def haversine(lon1, lat1, lon2, lat2):
     )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
+
+
+def parse_iso_time(t_str):
+    if not t_str:
+        return None
+    t_str = t_str.strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%S%z"):
+        try:
+            return datetime.strptime(t_str.replace("+00:00", "Z"), fmt)
+        except ValueError:
+            pass
+    try:
+        return datetime.fromisoformat(t_str.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def parse_gpx_file(file_path):
+    """解析单个 GPX 原始文件，提取完整高精度轨迹点及运动统计数据"""
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+    except Exception as e:
+        print(f"⚠️ 无法读取 GPX 文件 {file_path}: {e}")
+        return []
+
+    if not content.strip():
+        return []
+
+    # 剔除 XML 命名空间与前缀，兼容各大运动厂商（Garmin, Strava, Apple, Keep等）导出的 GPX
+    cleaned = re.sub(r'xmlns(?::\w+)?="[^"]*"', "", content)
+    cleaned = re.sub(r"(</?)\w+:", r"\1", cleaned)
+
+    try:
+        root = ET.fromstring(cleaned)
+    except Exception as e:
+        print(f"⚠️ 解析 GPX XML 失败 {file_path}: {e}")
+        return []
+
+    activities = []
+    trks = root.findall(".//trk")
+    if not trks:
+        trks = root.findall(".//rte") or [root]
+
+    for trk in trks:
+        trk_type = (
+            (trk.findtext("type") or root.findtext(".//type") or "").strip().lower()
+        )
+        if any(k in trk_type for k in ["cycl", "ride", "bike", "velo"]):
+            m_type = "Cycling"
+        elif any(k in trk_type for k in ["hike", "hiking"]):
+            m_type = "Hike"
+        elif any(k in trk_type for k in ["walk"]):
+            m_type = "Walk"
+        else:
+            m_type = "Run"
+
+        points = []
+        times = []
+        elevations = []
+        hrs = []
+
+        pts = trk.findall(".//trkpt") or trk.findall(".//rtept")
+        for pt in pts:
+            try:
+                lat = float(pt.attrib["lat"])
+                lon = float(pt.attrib["lon"])
+                points.append([lon, lat])
+            except (KeyError, ValueError):
+                continue
+
+            ele_str = pt.findtext("ele")
+            if ele_str:
+                try:
+                    elevations.append(float(ele_str))
+                except ValueError:
+                    pass
+
+            t_str = pt.findtext("time")
+            if t_str:
+                times.append(t_str.strip())
+
+            hr_str = pt.findtext(".//hr")
+            if hr_str:
+                try:
+                    hrs.append(float(hr_str))
+                except ValueError:
+                    pass
+
+        if len(points) < 2:
+            continue
+
+        # 计算真实累计距离 (米)
+        dist_m = 0.0
+        for i in range(len(points) - 1):
+            dist_m += haversine(
+                points[i][0], points[i][1], points[i + 1][0], points[i + 1][1]
+            )
+
+        # 计算运动总时间 (秒)
+        time_s = 0.0
+        if len(times) >= 2:
+            t_start = parse_iso_time(times[0])
+            t_end = parse_iso_time(times[-1])
+            if t_start and t_end:
+                time_s = max(0.0, (t_end - t_start).total_seconds())
+
+        # 计算累计海拔爬升 (米)
+        elev_g = 0.0
+        for i in range(len(elevations) - 1):
+            diff = elevations[i + 1] - elevations[i]
+            if diff > 0:
+                elev_g += diff
+
+        # 计算平均心率
+        avg_hr = (sum(hrs) / len(hrs)) if hrs else 0.0
+
+        activities.append((points, m_type, dist_m, time_s, avg_hr, elev_g))
+
+    return activities
 
 
 print(f"步骤 1/3：正在生成 {args.distance}m 范围的基础地图...")
@@ -200,7 +266,7 @@ result = generate_poster(
     )
 )
 
-print("步骤 2/3：读取并汇总运动数据...")
+print("步骤 2/3：从 GPX 目录读取并汇总原始运动数据...")
 
 poster_bounds = result.bounds.poster_bounds
 width_px = result.size.width
@@ -214,34 +280,27 @@ project_func = getattr(
     ),
 )
 
-sql = """
-SELECT 
-    summary_polyline, type, distance, moving_time, average_heartrate, elevation_gain 
-FROM read_parquet('data.parquet') 
-WHERE summary_polyline IS NOT NULL
-"""
+# 自动扫描 GPX / gpx 目录下的所有 .gpx 原始文件
+gpx_dir = Path("GPX")
+if not gpx_dir.exists():
+    gpx_dir = Path("gpx")
 
-with duckdb.connect() as conn:
-    try:
-        raw_rows = conn.execute(sql).fetchall()
-        clean_rows = []
-        for r in raw_rows:
-            clean_rows.append(
-                (
-                    str(r[0]),
-                    str(r[1]),
-                    safe_float(r[2]),
-                    parse_time(r[3]),
-                    safe_float(r[4]),
-                    safe_float(r[5]),
-                )
-            )
-        raw_rows = clean_rows
-    except Exception as e:
-        print(f"⚠️ 读取统计数据失败 ({e})，部分数据可能显示为0。")
-        fallback_sql = "SELECT summary_polyline, type FROM read_parquet('data.parquet') WHERE summary_polyline IS NOT NULL"
-        fallback_rows = conn.execute(fallback_sql).fetchall()
-        raw_rows = [(str(r[0]), str(r[1]), 0.0, 0.0, 0.0, 0.0) for r in fallback_rows]
+gpx_files = []
+if gpx_dir.exists():
+    gpx_files = [
+        p for p in gpx_dir.rglob("*") if p.is_file() and p.suffix.lower() == ".gpx"
+    ]
+
+workout_records = []
+if gpx_files:
+    print(
+        f"📁 成功扫描到 {len(gpx_files)} 个 GPX 文件，正在解析无损轨迹点与运动数据..."
+    )
+    for gpx_file in gpx_files:
+        workout_records.extend(parse_gpx_file(gpx_file))
+    print(f"✅ 成功提取到 {len(workout_records)} 条运动记录。")
+else:
+    print("⚠️ 未在 GPX 目录下找到任何 .gpx 文件！")
 
 print("步骤 3/3：注入轨迹与排版...")
 
@@ -261,14 +320,12 @@ total_elev_g = total_weighted_hr = total_time_s = 0
 
 run_routes, other_routes = [], []
 
-for row in raw_rows:
-    poly_str, m_type, dist_m, time_s, avg_hr, elev_g = row
-    decoded_points = decode_polyline(poly_str)
-    if not decoded_points or len(decoded_points) < 2:
+for points, m_type, dist_m, time_s, avg_hr, elev_g in workout_records:
+    if not points or len(points) < 2:
         continue
 
     in_region = False
-    for point in decoded_points:
+    for point in points:
         if haversine(point[0], point[1], args.lon, args.lat) <= args.distance:
             in_region = True
             break
@@ -277,11 +334,11 @@ for row in raw_rows:
         continue
 
     if m_type == "Run":
-        run_routes.append((decoded_points, m_type))
+        run_routes.append((points, m_type))
         run_count += 1
         run_dist_km += dist_m / 1000.0
     else:
-        other_routes.append((decoded_points, m_type))
+        other_routes.append((points, m_type))
         if m_type in ["Cycling", "Ride"]:
             ride_count += 1
             ride_dist_km += dist_m / 1000.0
@@ -449,4 +506,4 @@ final_path = "Workouts_Poster.svg"
 with open(final_path, "w", encoding="utf-8") as f:
     f.write(svg_content)
 
-print(f"\n大功告成！路网已提亮的海报已生成：{final_path}")
+print(f"\n大功告成！海报已成功生成：{final_path}")
