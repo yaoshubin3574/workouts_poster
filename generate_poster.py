@@ -4,7 +4,108 @@ import re
 from pathlib import Path
 
 import duckdb
+
+# =========================================================
+# 🛠️ 补丁：修复 terraink-py 无法正确解析大型水体(西湖/大江大河)的 Bug
+# 将 OSM Multipolygon 关系中拆碎的岸线分段自动缝合成完整闭合的大水系
+# =========================================================
+import terraink_py.osm as _osm
 from terraink_py import PosterRequest, generate_poster
+
+_orig_extract_paths = _osm.extract_paths
+
+
+def _stitch_open_ways(ways, tol=1e-4):
+    """将首尾相接的未闭合线段缝合成完整的闭合多边形外圈"""
+    if not ways:
+        return []
+    closed_rings, open_ways = [], []
+    for w in ways:
+        if len(w) < 2:
+            continue
+        # 已经闭合的直接保留
+        if (
+            len(w) >= 4
+            and (w[0][0] - w[-1][0]) ** 2 + (w[0][1] - w[-1][1]) ** 2 <= tol**2
+        ):
+            closed_rings.append(w)
+        else:
+            open_ways.append(list(w))
+
+    tol_sq = tol**2
+    while open_ways:
+        current = open_ways.pop(0)
+        extended = True
+        while extended:
+            extended = False
+            # 判断当前链是否已首尾相接闭合
+            if (
+                len(current) >= 4
+                and (current[0][0] - current[-1][0]) ** 2
+                + (current[0][1] - current[-1][1]) ** 2
+                <= tol_sq
+            ):
+                current[-1] = current[0]
+                closed_rings.append(current)
+                break
+            c_end, c_start = current[-1], current[0]
+            matched_idx, match_type = -1, None
+            for i, other in enumerate(open_ways):
+                o_start, o_end = other[0], other[-1]
+                if (c_end[0] - o_start[0]) ** 2 + (
+                    c_end[1] - o_start[1]
+                ) ** 2 <= tol_sq:
+                    matched_idx, match_type = i, "append_forward"
+                    break
+                elif (c_end[0] - o_end[0]) ** 2 + (c_end[1] - o_end[1]) ** 2 <= tol_sq:
+                    matched_idx, match_type = i, "append_reverse"
+                    break
+                elif (c_start[0] - o_end[0]) ** 2 + (
+                    c_start[1] - o_end[1]
+                ) ** 2 <= tol_sq:
+                    matched_idx, match_type = i, "prepend_forward"
+                    break
+                elif (c_start[0] - o_start[0]) ** 2 + (
+                    c_start[1] - o_start[1]
+                ) ** 2 <= tol_sq:
+                    matched_idx, match_type = i, "prepend_reverse"
+                    break
+            if matched_idx != -1:
+                other = open_ways.pop(matched_idx)
+                if match_type == "append_forward":
+                    current.extend(other[1:])
+                elif match_type == "append_reverse":
+                    current.extend(other[-2::-1])
+                elif match_type == "prepend_forward":
+                    current = other[:-1] + current
+                elif match_type == "prepend_reverse":
+                    current = other[:0:-1] + current
+                extended = True
+        if len(current) >= 4:
+            current.append(current[0])
+            closed_rings.append(current)
+    return closed_rings
+
+
+def _patched_extract_paths(element: dict, *, polygon: bool):
+    """拦截 relation 解析，使用真正的岸线拼接逻辑"""
+    if element.get("type") == "relation" and polygon:
+        members = [
+            m
+            for m in element.get("members", [])
+            if m.get("type") == "way" and m.get("geometry")
+        ]
+        preferred = [m for m in members if m.get("role") == "outer"] or [
+            m for m in members if m.get("role") != "inner"
+        ]
+        ways = [_osm.geometry_to_points(m.get("geometry", [])) for m in preferred]
+        return _stitch_open_ways(ways)
+    return _orig_extract_paths(element, polygon=polygon)
+
+
+# 应用补丁覆盖原函数
+_osm.extract_paths = _patched_extract_paths
+# =========================================================
 from terraink_py.api import MercatorProjector
 
 parser = argparse.ArgumentParser(description="生成运动轨迹海报")
