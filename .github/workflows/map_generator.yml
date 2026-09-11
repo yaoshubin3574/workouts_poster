@@ -43,6 +43,8 @@ on:
 jobs:
   build_map:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -85,12 +87,12 @@ jobs:
             lat = custom_lat if custom_lat else data['lat']
             lon = custom_lon if custom_lon else data['lon']
             dist = custom_dist if custom_dist else data['distance']
-            print(f"👉 采用预设配置 [{preset}]: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
+            print(f"采用预设配置 [{preset}]: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
         else:
             if not (custom_city and custom_lat and custom_lon and custom_dist):
-                raise ValueError("❌ 选择 CUSTOM 模式时，必须完整填写 city, lat, lon, distance 四个参数！")
+                raise ValueError("选择 CUSTOM 模式时，必须完整填写 city, lat, lon, distance 四个参数！")
             city, lat, lon, dist = custom_city, custom_lat, custom_lon, custom_dist
-            print(f"👉 采用自定义配置: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
+            print(f"采用自定义配置: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
 
         # 写入环境变量
         env_file = os.getenv('GITHUB_ENV')
@@ -120,21 +122,38 @@ jobs:
         sudo apt-get install -y inkscape
         inkscape --export-width=1080 --export-height=1528 --export-type=png --export-filename=Workouts_Poster.png Workouts_Poster.svg
 
-    - name: 整理输出文件
+    - name: 整理输出文件 (SVG 与 PNG)
       run: |
+        CLEAN_CITY=$(echo "$CITY" | tr ' ' '_')
         mkdir -p output
-        cp Workouts_Poster.png "output/${CITY}_Workouts_Poster.png"
-        if [ "${{ github.event.inputs.generate_svg }}" = "true" ]; then
-          cp Workouts_Poster.svg "output/${CITY}_Workouts_Poster.svg"
-          echo "✅ 已包含 SVG 矢量文件"
-        else
-          echo "ℹ️ 未勾选生成 SVG，仅保留 PNG 图片"
-        fi
+        cp Workouts_Poster.png "output/${CLEAN_CITY}_Workouts_Poster.png"
+        cp Workouts_Poster.svg "output/${CLEAN_CITY}_Workouts_Poster.svg"
+        echo "CLEAN_CITY=${CLEAN_CITY}" >> $GITHUB_ENV
+        echo "输出文件就绪: ${CLEAN_CITY}_Workouts_Poster.png (1080x1528) 和 ${CLEAN_CITY}_Workouts_Poster.svg"
 
-    - name: 打包发布提供下载
+    - name: 打包文件提供下载 (Artifacts)
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.CITY }}_Workouts_Poster
+        name: ${{ env.CLEAN_CITY }}_Workouts_Poster
         path: output/
         if-no-files-found: error
         retention-days: 7
+
+    - name: 发布 PNG 到 GitHub Releases 附件
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        TAG="${CLEAN_CITY}_Workouts_Poster"
+        FILE="output/${CLEAN_CITY}_Workouts_Poster.png"
+        echo "准备发布 Release: $TAG，附件: $FILE"
+
+        if gh release view "$TAG" >/dev/null 2>&1; then
+          echo "Release [$TAG] 已存在，正在更新并替换 PNG 附件..."
+          gh release upload "$TAG" "$FILE" --clobber
+        else
+          echo "创建新 Release [$TAG] 并上传 PNG 附件..."
+          gh release create "$TAG" "$FILE" \
+            --title "$TAG" \
+            --notes "Generated Workouts Poster for ${CITY} (${{ github.event.inputs.preset }})"
+        fi
+        echo "Releases 发布成功"
