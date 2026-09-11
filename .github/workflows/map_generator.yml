@@ -9,15 +9,15 @@ on:
         type: choice
         default: 'HANGZHOU (4.6km)'
         options:
+          - 'CUSTOM (手动输入下方参数)'
           - 'HANGZHOU (4.6km)'
-          - 'XINXIANG (20km)'
+          - 'HENAN (65km)'
           - 'JIAOZUO (13km)'
           - 'JINHUA (6.6km)'
-          - 'TAIZHOU-2200 (2.2km)'
-          - 'TAIZHOU-2000 (2.0km)'
           - 'NINGBO (8km)'
-          - 'HENAN (65km)'
-          - 'CUSTOM (手动输入下方参数)'
+          - 'TAIZHOU-2000 (2.0km)'
+          - 'TAIZHOU-2200 (2.2km)'
+          - 'XINXIANG (20km)'
       city:
         description: '城市名称 (仅 CUSTOM 模式必填，预设模式请留空)'
         required: false
@@ -62,16 +62,16 @@ jobs:
         custom_lon = "${{ github.event.inputs.lon }}".strip()
         custom_dist = "${{ github.event.inputs.distance }}".strip()
 
-        # CSV 中的内置预设数据库
+        # 按城市字母 A-Z 严格排序的预设数据
         presets = {
-            'XINXIANG (20km)':      {'city': 'XINXIANG', 'distance': '20000', 'lon': '113.9313797', 'lat': '35.2856284'},
-            'JIAOZUO (13km)':       {'city': 'JIAOZUO',  'distance': '13000', 'lon': '113.2526282', 'lat': '35.1946971'},
-            'JINHUA (6.6km)':       {'city': 'JINHUA',   'distance': '6600',  'lon': '119.5345237', 'lat': '29.1160378'},
-            'TAIZHOU-2200 (2.2km)': {'city': 'TAIZHOU',  'distance': '2200',  'lon': '121.2226776', 'lat': '28.9152824'},
-            'TAIZHOU-2000 (2.0km)': {'city': 'TAIZHOU',  'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
-            'NINGBO (8km)':         {'city': 'NINGBO',   'distance': '8000',  'lon': '121.4667517', 'lat': '29.5165939'},
             'HANGZHOU (4.6km)':     {'city': 'HANGZHOU', 'distance': '4600',  'lon': '120.1390416', 'lat': '30.2250866'},
             'HENAN (65km)':         {'city': 'HENAN',    'distance': '65000', 'lon': '113.6178735', 'lat': '35.1197434'},
+            'JIAOZUO (13km)':       {'city': 'JIAOZUO',  'distance': '13000', 'lon': '113.2526282', 'lat': '35.1946971'},
+            'JINHUA (6.6km)':       {'city': 'JINHUA',   'distance': '6600',  'lon': '119.5345237', 'lat': '29.1160378'},
+            'NINGBO (8km)':         {'city': 'NINGBO',   'distance': '8000',  'lon': '121.4667517', 'lat': '29.5165939'},
+            'TAIZHOU-2000 (2.0km)': {'city': 'TAIZHOU',  'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
+            'TAIZHOU-2200 (2.2km)': {'city': 'TAIZHOU',  'distance': '2200',  'lon': '121.2226776', 'lat': '28.9152824'},
+            'XINXIANG (20km)':      {'city': 'XINXIANG', 'distance': '20000', 'lon': '113.9313797', 'lat': '35.2856284'},
         }
 
         if preset in presets and not preset.startswith('CUSTOM'):
@@ -87,7 +87,7 @@ jobs:
             city, lat, lon, dist = custom_city, custom_lat, custom_lon, custom_dist
             print(f"👉 采用自定义配置: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
 
-        # 写入环境变量，供后续 Step 和 Artifacts 使用
+        # 写入环境变量
         env_file = os.getenv('GITHUB_ENV')
         with open(env_file, 'a', encoding='utf-8') as f:
             f.write(f"CITY={city}\n")
@@ -99,14 +99,7 @@ jobs:
     - name: 安装依赖
       run: |
         python -m pip install --upgrade pip
-        pip install pandas pyarrow duckdb Pillow terraink-py
-
-    - name: 下载最新 data.db
-      run: |
-        wget https://raw.githubusercontent.com/yaoshubin3574/workouts_page/master/run_page/data.db -O data.db
-
-    - name: 转换 data.db 到 data.parquet
-      run: python convert_db.py
+        pip install Pillow terraink-py
 
     - name: 生成 SVG 海报
       run: |

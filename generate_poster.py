@@ -1,9 +1,9 @@
 import argparse
 import math
 import re
-import xml.etree.ElementTree as ET
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
+import xml.etree.ElementTree as ET
 
 # =========================================================
 # 🛠️ 补丁：修复 terraink-py 无法正确解析大型水体(西湖/大江大河)的 Bug
@@ -171,9 +171,7 @@ def parse_gpx_file(file_path):
         trks = root.findall(".//rte") or [root]
 
     for trk in trks:
-        trk_type = (
-            (trk.findtext("type") or root.findtext(".//type") or "").strip().lower()
-        )
+        trk_type = (trk.findtext("type") or root.findtext(".//type") or "").strip().lower()
         if any(k in trk_type for k in ["cycl", "ride", "bike", "velo"]):
             m_type = "Cycling"
         elif any(k in trk_type for k in ["hike", "hiking"]):
@@ -221,9 +219,7 @@ def parse_gpx_file(file_path):
         # 计算真实累计距离 (米)
         dist_m = 0.0
         for i in range(len(points) - 1):
-            dist_m += haversine(
-                points[i][0], points[i][1], points[i + 1][0], points[i + 1][1]
-            )
+            dist_m += haversine(points[i][0], points[i][1], points[i + 1][0], points[i + 1][1])
 
         # 计算运动总时间 (秒)
         time_s = 0.0
@@ -266,7 +262,7 @@ result = generate_poster(
     )
 )
 
-print("步骤 2/3：从 GPX 目录读取并汇总原始运动数据...")
+print("步骤 2/3：从 .gpx 目录读取并汇总原始运动数据...")
 
 poster_bounds = result.bounds.poster_bounds
 width_px = result.size.width
@@ -280,27 +276,29 @@ project_func = getattr(
     ),
 )
 
-# 自动扫描 GPX / gpx 目录下的所有 .gpx 原始文件
-gpx_dir = Path("GPX")
-if not gpx_dir.exists():
-    gpx_dir = Path("gpx")
-
+# 💥 优先读取 .gpx 目录，同时兼顾 GPX 和 gpx（包括多级子目录）
+gpx_candidates = [Path(".gpx"), Path("GPX"), Path("gpx")]
 gpx_files = []
-if gpx_dir.exists():
-    gpx_files = [
-        p for p in gpx_dir.rglob("*") if p.is_file() and p.suffix.lower() == ".gpx"
-    ]
+active_dir_name = None
+
+for d in gpx_candidates:
+    if d.exists() and d.is_dir():
+        found = [p for p in d.rglob("*") if p.is_file() and p.suffix.lower() == ".gpx"]
+        if found:
+            gpx_files.extend(found)
+            active_dir_name = d.name
+
+# 文件去重并排序
+gpx_files = sorted(list(set(gpx_files)))
 
 workout_records = []
 if gpx_files:
-    print(
-        f"📁 成功扫描到 {len(gpx_files)} 个 GPX 文件，正在解析无损轨迹点与运动数据..."
-    )
+    print(f"📁 成功从 [{active_dir_name}] 目录下扫描到 {len(gpx_files)} 个 GPX 文件，开始提取轨迹...")
     for gpx_file in gpx_files:
         workout_records.extend(parse_gpx_file(gpx_file))
-    print(f"✅ 成功提取到 {len(workout_records)} 条运动记录。")
+    print(f"✅ 成功加载 {len(workout_records)} 条运动轨迹。")
 else:
-    print("⚠️ 未在 GPX 目录下找到任何 .gpx 文件！")
+    print("⚠️ 警告：在 .gpx / GPX 目录下未找到任何 .gpx 文件！")
 
 print("步骤 3/3：注入轨迹与排版...")
 
