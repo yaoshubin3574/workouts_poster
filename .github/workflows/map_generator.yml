@@ -19,7 +19,7 @@ on:
           - 'TAIZHOU-2200 (2.2km)'
           - 'XINXIANG (20km)'
       generate_svg:
-        description: '是否生成并下载 SVG 矢量文件'
+        description: '生成 SVG 文件'
         required: false
         type: boolean
         default: false
