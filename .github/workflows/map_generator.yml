@@ -53,7 +53,7 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: ⚙️ 解析运行参数 (预设或手动)
+    - name: 解析运行参数
       run: |
         python - << 'EOF'
         import os
@@ -138,5 +138,4 @@ jobs:
         TAG_NAME="${CITY}_$(date +'%Y%m%d_%H%M%S')"
         gh release create "$TAG_NAME" "output/${CITY}_Workouts_Poster.png" \
           --title "${CITY}_Workouts_Poster" \
-          --notes "Workouts Poster for ${CITY} (72 ppi PNG)" \
-          --clobber
+          --notes "Workouts Poster for ${CITY} (72 ppi PNG)"
