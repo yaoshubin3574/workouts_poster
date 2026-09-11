@@ -1,9 +1,13 @@
 import argparse
 import math
 import re
+import sys
 from pathlib import Path
 from datetime import datetime
 import xml.etree.ElementTree as ET
+
+# 保证在任何环境下控制台输出中文与 Emoji 正常
+sys.stdout.reconfigure(encoding="utf-8")
 
 # =========================================================
 # 🛠️ 补丁：修复 terraink-py 无法正确解析大型水体(西湖/大江大河)的 Bug
@@ -61,7 +65,7 @@ def _stitch_open_ways(ways, tol=1e-4):
                     matched_idx, match_type = i, "append_reverse"
                     break
                 elif (c_start[0] - o_end[0]) ** 2 + (
-                    c_start[1] - o_end[1]
+                    c_start[1] - o_start[1]
                 ) ** 2 <= tol_sq:
                     matched_idx, match_type = i, "prepend_forward"
                     break
@@ -81,6 +85,8 @@ def _stitch_open_ways(ways, tol=1e-4):
                 elif match_type == "prepend_reverse":
                     current = other[:0:-1] + current
                 extended = True
+            if not extended:
+                break
         if len(current) >= 4:
             current.append(current[0])
             closed_rings.append(current)
@@ -155,26 +161,47 @@ def parse_gpx_file(file_path):
     if not content.strip():
         return []
 
-    # 剔除 XML 命名空间与前缀，兼容各大运动厂商（Garmin, Strava, Apple, Keep等）导出的 GPX
-    cleaned = re.sub(r'xmlns(?::\w+)?="[^"]*"', "", content)
-    cleaned = re.sub(r"(</?)\w+:", r"\1", cleaned)
-
+    root = None
+    # 方案 1：优先采用标准 XML 解析
     try:
-        root = ET.fromstring(cleaned)
-    except Exception as e:
-        print(f"⚠️ 解析 GPX XML 失败 {file_path}: {e}")
-        return []
+        root = ET.fromstring(content)
+    except Exception:
+        pass
+
+    # 方案 2：如果标准解析遇到命名空间异常（如前缀未声明），彻底清洗命名空间与前缀
+    if root is None:
+        try:
+            cleaned = re.sub(r'\s+xmlns(?::\w+)?=["\'][^"\']*["\']', "", content)
+            cleaned = re.sub(r'\s+\w+:\w+=["\'][^"\']*["\']', "", cleaned)
+            cleaned = re.sub(r"(</?)\w+:", r"\1", cleaned)
+            root = ET.fromstring(cleaned)
+        except Exception as e:
+            print(f"⚠️ 解析 GPX XML 失败 {file_path}: {e}")
+            return []
+
+    # 统一剥离标签中的 {namespace} 前缀，兼容所有运动软件
+    for elem in root.iter():
+        if isinstance(elem.tag, str) and "}" in elem.tag:
+            elem.tag = elem.tag.split("}", 1)[1]
 
     activities = []
     trks = root.findall(".//trk")
     if not trks:
         trks = root.findall(".//rte") or [root]
 
+    stem_name = Path(file_path).stem.lower()
     for trk in trks:
-        trk_type = (trk.findtext("type") or root.findtext(".//type") or "").strip().lower()
+        trk_type = (
+            trk.findtext("type")
+            or root.findtext(".//type")
+            or trk.findtext("name")
+            or root.findtext(".//name")
+            or stem_name
+        ).strip().lower()
+
         if any(k in trk_type for k in ["cycl", "ride", "bike", "velo"]):
             m_type = "Cycling"
-        elif any(k in trk_type for k in ["hike", "hiking"]):
+        elif any(k in trk_type for k in ["hike", "hiking", "mount"]):
             m_type = "Hike"
         elif any(k in trk_type for k in ["walk"]):
             m_type = "Walk"
@@ -189,8 +216,12 @@ def parse_gpx_file(file_path):
         pts = trk.findall(".//trkpt") or trk.findall(".//rtept")
         for pt in pts:
             try:
-                lat = float(pt.attrib["lat"])
-                lon = float(pt.attrib["lon"])
+                lat_str = pt.get("lat") or pt.get("latitude") or pt.get("Lat")
+                lon_str = pt.get("lon") or pt.get("lng") or pt.get("longitude") or pt.get("Lon")
+                if lat_str is None or lon_str is None:
+                    continue
+                lat = float(lat_str)
+                lon = float(lon_str)
                 points.append([lon, lat])
             except (KeyError, ValueError):
                 continue
@@ -268,32 +299,34 @@ poster_bounds = result.bounds.poster_bounds
 width_px = result.size.width
 height_px = result.size.height
 projector = MercatorProjector.from_bounds(poster_bounds, width_px, height_px)
-project_func = getattr(
-    projector,
-    "project",
-    getattr(
-        projector, "lat_lon_to_pixel", getattr(projector, "lon_lat_to_pixel", None)
-    ),
-)
 
 # 💥 优先读取 .gpx 目录，同时兼顾 GPX 和 gpx（包括多级子目录）
-gpx_candidates = [Path(".gpx"), Path("GPX"), Path("gpx")]
+gpx_candidates = [Path(".gpx"), Path("GPX"), Path("gpx"), Path("data")]
 gpx_files = []
-active_dir_name = None
+found_dirs = []
 
 for d in gpx_candidates:
     if d.exists() and d.is_dir():
         found = [p for p in d.rglob("*") if p.is_file() and p.suffix.lower() == ".gpx"]
         if found:
             gpx_files.extend(found)
-            active_dir_name = d.name
+            found_dirs.append(d.name)
+
+# 兜底：如果预设目录未发现 GPX，全局递归查找（忽略 .git 与缓存）
+if not gpx_files:
+    for p in Path(".").rglob("*"):
+        if p.is_file() and p.suffix.lower() == ".gpx" and ".git" not in p.parts:
+            gpx_files.append(p)
+    if gpx_files:
+        found_dirs.append("workspace")
 
 # 文件去重并排序
 gpx_files = sorted(list(set(gpx_files)))
 
 workout_records = []
 if gpx_files:
-    print(f"📁 成功从 [{active_dir_name}] 目录下扫描到 {len(gpx_files)} 个 GPX 文件，开始提取轨迹...")
+    dir_info = "/".join(set(found_dirs)) if found_dirs else "unknown"
+    print(f"📁 成功从 [{dir_info}] 扫描到 {len(gpx_files)} 个 GPX 文件，开始解析轨迹...")
     for gpx_file in gpx_files:
         workout_records.extend(parse_gpx_file(gpx_file))
     print(f"✅ 成功加载 {len(workout_records)} 条运动轨迹。")
@@ -318,13 +351,21 @@ total_elev_g = total_weighted_hr = total_time_s = 0
 
 run_routes, other_routes = [], []
 
+# 海报画布可视经纬度范围
+pb = poster_bounds
+
 for points, m_type, dist_m, time_s, avg_hr, elev_g in workout_records:
     if not points or len(points) < 2:
         continue
 
     in_region = False
     for point in points:
-        if haversine(point[0], point[1], args.lon, args.lat) <= args.distance:
+        p_lon, p_lat = point[0], point[1]
+        # 判断轨迹是否进入海报视口或处于搜索半径内
+        if (
+            haversine(p_lon, p_lat, args.lon, args.lat) <= args.distance
+            or (pb.west <= p_lon <= pb.east and pb.south <= p_lat <= pb.north)
+        ):
             in_region = True
             break
 
@@ -350,6 +391,11 @@ for points, m_type, dist_m, time_s, avg_hr, elev_g in workout_records:
     total_weighted_hr += avg_hr * time_s
     total_time_s += time_s
 
+print(
+    f"📍 匹配到当前海报区域（{args.city} 半径 {args.distance}m）的运动记录：{total_count} 条 "
+    f"（跑步: {run_count}, 骑行: {ride_count}, 徒步: {hike_count}）"
+)
+
 total_avg_hr = total_weighted_hr / total_time_s if total_time_s > 0 else 0
 total_time_h = int(total_time_s // 3600)
 total_time_m = int((total_time_s % 3600) // 60)
@@ -363,11 +409,7 @@ def add_route_to_svg(lon_lat_list, m_type):
     pixel_points = []
     for point in lon_lat_list:
         lon, lat = point[0], point[1]
-        x, y = (
-            project_func(lat, lon)
-            if project_func.__name__ == "lat_lon_to_pixel"
-            else project_func(lon, lat)
-        )
+        x, y = projector.project(lon, lat)
         pixel_points.append(f"{x:.1f},{y:.1f}")
     color = color_map.get(m_type, default_color)
     pts_str = " ".join(pixel_points)
