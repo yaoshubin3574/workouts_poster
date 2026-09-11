@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       preset:
-        description: '📍 预设城市'
+        description: '📍 预设城市 (选择后直接运行；或选 CUSTOM 手动输入)'
         required: true
         type: choice
         default: 'HANGZHOU (4.6km)'
         options:
-          - 'CUSTOM'
+          - 'CUSTOM (手动输入下方参数)'
           - 'HANGZHOU (4.6km)'
           - 'HENAN (65km)'
           - 'JIAOZUO (13km)'
@@ -18,25 +18,20 @@ on:
           - 'TAIZHOU-2000 (2.0km)'
           - 'TAIZHOU-2200 (2.2km)'
           - 'XINXIANG (20km)'
-      generate_svg:
-        description: '生成 SVG 文件'
-        required: false
-        type: boolean
-        default: false
       city:
-        description: '城市'
+        description: '城市名称 (仅 CUSTOM 模式必填，预设模式请留空)'
         required: false
         default: ''
       lat:
-        description: '中心点纬度'
+        description: '中心点纬度 (仅 CUSTOM 模式必填，预设模式请留空)'
         required: false
         default: ''
       lon:
-        description: '中心点经度'
+        description: '中心点经度 (仅 CUSTOM 模式必填，预设模式请留空)'
         required: false
         default: ''
       distance:
-        description: '距离/m'
+        description: '距离/米 (仅 CUSTOM 模式必填，或用于覆写预设范围)'
         required: false
         default: ''
 
@@ -48,22 +43,27 @@ jobs:
     
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
     steps:
     - name: 获取仓库代码
       uses: actions/checkout@v4
+
     - name: 设置 Python 3.12
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
+
     - name: ⚙️ 解析运行参数 (预设或手动)
       run: |
         python - << 'EOF'
         import os
+
         preset = "${{ github.event.inputs.preset }}".strip()
         custom_city = "${{ github.event.inputs.city }}".strip()
         custom_lat = "${{ github.event.inputs.lat }}".strip()
         custom_lon = "${{ github.event.inputs.lon }}".strip()
         custom_dist = "${{ github.event.inputs.distance }}".strip()
+
         # 按城市字母 A-Z 严格排序的预设数据
         presets = {
             'HANGZHOU (4.6km)':     {'city': 'HANGZHOU', 'distance': '4600',  'lon': '120.1390416', 'lat': '30.2250866'},
@@ -75,6 +75,7 @@ jobs:
             'TAIZHOU-2200 (2.2km)': {'city': 'TAIZHOU',  'distance': '2200',  'lon': '121.2226776', 'lat': '28.9152824'},
             'XINXIANG (20km)':      {'city': 'XINXIANG', 'distance': '20000', 'lon': '113.9313797', 'lat': '35.2856284'},
         }
+
         if preset in presets and not preset.startswith('CUSTOM'):
             data = presets[preset]
             city = custom_city if custom_city else data['city']
@@ -87,6 +88,7 @@ jobs:
                 raise ValueError("❌ 选择 CUSTOM 模式时，必须完整填写 city, lat, lon, distance 四个参数！")
             city, lat, lon, dist = custom_city, custom_lat, custom_lon, custom_dist
             print(f"👉 采用自定义配置: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
+
         # 写入环境变量
         env_file = os.getenv('GITHUB_ENV')
         with open(env_file, 'a', encoding='utf-8') as f:
@@ -95,10 +97,12 @@ jobs:
             f.write(f"LON={lon}\n")
             f.write(f"DISTANCE={dist}\n")
         EOF
+
     - name: 安装依赖
       run: |
         python -m pip install --upgrade pip
         pip install Pillow terraink-py
+
     - name: 生成基础海报与轨迹
       run: |
         python generate_poster.py \
@@ -106,29 +110,33 @@ jobs:
           --lon $LON \
           --distance $DISTANCE \
           --city "$CITY"
+
     - name: 渲染 72ppi PNG 图片
       run: |
         sudo apt-get update
         sudo apt-get install -y inkscape
         inkscape --export-type=png --export-filename=Workouts_Poster.png --export-dpi=72 Workouts_Poster.svg
-        python -c "from PIL import Image; im = Image.open('Workouts_Poster.png'); im.save('Workouts_Poster.png', dpi=(72, 72))"
-    - name: 整理输出文件
+
+    - name: 整理输出文件 (包含 SVG 与 PNG)
       run: |
         mkdir -p output
         cp Workouts_Poster.png "output/${CITY}_Workouts_Poster.png"
         cp Workouts_Poster.svg "output/${CITY}_Workouts_Poster.svg"
-    - name: 打包下载文件 (SVG + PNG)
+
+    - name: 打包文件提供下载 (Artifacts)
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.CITY }}_Workouts_Poster
         path: output/
         if-no-files-found: error
         retention-days: 7
-    - name: 发布 Releases 附件 (PNG)
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ env.CITY }}_Workouts_Poster
-        name: ${{ env.CITY }}_Workouts_Poster
-        files: output/${{ env.CITY }}_Workouts_Poster.png
+
+    - name: 发布 GitHub Release 并上传 PNG 附件
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        TAG_NAME="${CITY}_$(date +'%Y%m%d_%H%M%S')"
+        gh release create "$TAG_NAME" "output/${CITY}_Workouts_Poster.png" \
+          --title "${CITY}_Workouts_Poster" \
+          --notes "Workouts Poster for ${CITY} (72 ppi PNG)" \
+          --clobber
