@@ -114,7 +114,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y inkscape
 
-    - name: 批量生成海报并渲染 150PPI PNG
+    - name: 生成海报并渲染 300PPI PNG
       run: |
         python - << 'EOF'
         import json, subprocess, sys
@@ -150,16 +150,16 @@ jobs:
             ]
             subprocess.run(cmd_svg, check=True)
 
-            # 2. 调用 Inkscape 渲染 150 PPI PNG
+            # 2. 调用 Inkscape 渲染 300 PPI PNG
             cmd_png = [
                 "inkscape",
                 "--export-type=png",
                 f"--export-filename={png_path}",
-                "--export-dpi=150",
+                "--export-dpi=300",
                 svg_path
             ]
             subprocess.run(cmd_png, check=True)
-            print(f" 成功完成: {png_path} (150 PPI) 和 {svg_path}")
+            print(f" 成功完成: {png_path} (300 PPI) 和 {svg_path}")
 
         print("\n 所有城市的海报生成与渲染已全部顺利完成！")
         EOF
@@ -179,4 +179,4 @@ jobs:
         TAG_NAME="${PACKAGE_NAME}_$(date +'%Y%m%d_%H%M%S')"
         gh release create "$TAG_NAME" output/*.png \
           --title "${PACKAGE_NAME}" \
-          --notes "Workouts Poster (150 PPI PNG) - generated at $(date +'%Y-%m-%d %H:%M:%S UTC')"
+          --notes "Workouts Poster (300 PPI PNG) - generated at $(date +'%Y-%m-%d %H:%M:%S UTC')"
