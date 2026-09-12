@@ -4,12 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       preset:
-        description: '📍 预设城市 (选择后直接运行；或选 CUSTOM 手动输入)'
+        description: '预设城市'
         required: true
         type: choice
-        default: 'HANGZHOU (4.6km)'
+        default: 'ALL CITIES '
         options:
-          - 'CUSTOM (手动输入下方参数)'
+          - 'ALL CITIES '
+          - 'CUSTOM '
           - 'HANGZHOU (4.6km)'
           - 'HENAN (65km)'
           - 'JIAOZUO (13km)'
@@ -19,19 +20,19 @@ on:
           - 'TAIZHOU-2200 (2.2km)'
           - 'XINXIANG (20km)'
       city:
-        description: '城市名称 (仅 CUSTOM 模式必填，预设模式请留空)'
+        description: '城市 '
         required: false
         default: ''
       lat:
-        description: '中心点纬度 (仅 CUSTOM 模式必填，预设模式请留空)'
+        description: '中心点纬度 '
         required: false
         default: ''
       lon:
-        description: '中心点经度 (仅 CUSTOM 模式必填，预设模式请留空)'
+        description: '中心点经度 '
         required: false
         default: ''
       distance:
-        description: '距离/米 (仅 CUSTOM 模式必填，或用于覆写预设范围)'
+        description: '距离/米 '
         required: false
         default: ''
 
@@ -53,10 +54,10 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: 解析运行参数
+    - name: 解析运行参数与构建目标
       run: |
         python - << 'EOF'
-        import os
+        import os, json
 
         preset = "${{ github.event.inputs.preset }}".strip()
         custom_city = "${{ github.event.inputs.city }}".strip()
@@ -64,69 +65,109 @@ jobs:
         custom_lon = "${{ github.event.inputs.lon }}".strip()
         custom_dist = "${{ github.event.inputs.distance }}".strip()
 
-        # 按城市字母 A-Z 严格排序的预设数据
+        # 按字母 A-Z 严格排序的预设数据列表
         presets = {
-            'HANGZHOU (4.6km)':     {'city': 'HANGZHOU', 'distance': '4600',  'lon': '120.1390416', 'lat': '30.2250866'},
-            'HENAN (65km)':         {'city': 'HENAN',    'distance': '65000', 'lon': '113.6178735', 'lat': '35.1197434'},
-            'JIAOZUO (13km)':       {'city': 'JIAOZUO',  'distance': '13000', 'lon': '113.2526282', 'lat': '35.1946971'},
-            'JINHUA (6.6km)':       {'city': 'JINHUA',   'distance': '6600',  'lon': '119.5345237', 'lat': '29.1160378'},
-            'NINGBO (8km)':         {'city': 'NINGBO',   'distance': '8000',  'lon': '121.4667517', 'lat': '29.5165939'},
-            'TAIZHOU-2000 (2.0km)': {'city': 'TAIZHOU',  'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
-            'TAIZHOU-2200 (2.2km)': {'city': 'TAIZHOU',  'distance': '2200',  'lon': '121.2226776', 'lat': '28.9152824'},
-            'XINXIANG (20km)':      {'city': 'XINXIANG', 'distance': '20000', 'lon': '113.9313797', 'lat': '35.2856284'},
+            'HANGZHOU (4.6km)':     {'city': 'HANGZHOU',     'title': 'HANGZHOU', 'distance': '4600',  'lon': '120.1390416', 'lat': '30.2250866'},
+            'HENAN (65km)':         {'city': 'HENAN',        'title': 'HENAN',    'distance': '65000', 'lon': '113.6178735', 'lat': '35.1197434'},
+            'JIAOZUO (13km)':       {'city': 'JIAOZUO',      'title': 'JIAOZUO',  'distance': '13000', 'lon': '113.2526282', 'lat': '35.1946971'},
+            'JINHUA (6.6km)':       {'city': 'JINHUA',       'title': 'JINHUA',   'distance': '6600',  'lon': '119.5345237', 'lat': '29.1160378'},
+            'NINGBO (8km)':         {'city': 'NINGBO',       'title': 'NINGBO',   'distance': '8000',  'lon': '121.4667517', 'lat': '29.5165939'},
+            'TAIZHOU-2000 (2.0km)': {'city': 'TAIZHOU-2000', 'title': 'TAIZHOU', 'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
+            'TAIZHOU-2200 (2.2km)': {'city': 'TAIZHOU-2200', 'title': 'TAIZHOU', 'distance': '2200',  'lon': '121.2226776', 'lat': '28.9152824'},
+            'XINXIANG (20km)':      {'city': 'XINXIANG',     'title': 'XINXIANG', 'distance': '20000', 'lon': '113.9313797', 'lat': '35.2856284'},
         }
 
-        if preset in presets and not preset.startswith('CUSTOM'):
+        if preset.startswith('ALL CITIES'):
+            targets = list(presets.values())
+            pkg_name = "ALL_CITIES_Workouts_Poster"
+            print(f" 模式：ALL CITIES，将批量生成全部 {len(targets)} 个预设城市的海报！")
+        elif preset in presets and not preset.startswith('CUSTOM'):
             data = presets[preset]
             city = custom_city if custom_city else data['city']
+            title = data.get('title', city)
             lat = custom_lat if custom_lat else data['lat']
             lon = custom_lon if custom_lon else data['lon']
             dist = custom_dist if custom_dist else data['distance']
-            print(f"👉 采用预设配置 [{preset}]: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
+            targets = [{'city': city, 'title': title, 'distance': dist, 'lon': lon, 'lat': lat}]
+            pkg_name = f"{city}_Workouts_Poster"
+            print(f" 采用预设配置 [{preset}]: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
         else:
             if not (custom_city and custom_lat and custom_lon and custom_dist):
-                raise ValueError("❌ 选择 CUSTOM 模式时，必须完整填写 city, lat, lon, distance 四个参数！")
-            city, lat, lon, dist = custom_city, custom_lat, custom_lon, custom_dist
-            print(f"👉 采用自定义配置: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
+                raise ValueError(" 选择 CUSTOM 模式时，必须完整填写 city, lat, lon, distance 四个参数！")
+            targets = [{'city': custom_city, 'title': custom_city, 'distance': custom_dist, 'lon': custom_lon, 'lat': custom_lat}]
+            pkg_name = f"{custom_city}_Workouts_Poster"
+            print(f" 采用自定义配置: 城市={custom_city}, 纬度={custom_lat}, 经度={custom_lon}, 范围={custom_dist}米")
 
-        # 写入环境变量
+        with open('targets.json', 'w', encoding='utf-8') as f:
+            json.dump(targets, f, ensure_ascii=False, indent=2)
+
+        # 写入环境变量供后续 Step 使用
         env_file = os.getenv('GITHUB_ENV')
         with open(env_file, 'a', encoding='utf-8') as f:
-            f.write(f"CITY={city}\n")
-            f.write(f"LAT={lat}\n")
-            f.write(f"LON={lon}\n")
-            f.write(f"DISTANCE={dist}\n")
+            f.write(f"PACKAGE_NAME={pkg_name}\n")
         EOF
 
-    - name: 安装依赖
+    - name: 安装依赖与 Inkscape
       run: |
         python -m pip install --upgrade pip
         pip install Pillow terraink-py
-
-    - name: 生成基础海报与轨迹
-      run: |
-        python generate_poster.py \
-          --lat $LAT \
-          --lon $LON \
-          --distance $DISTANCE \
-          --city "$CITY"
-
-    - name: 渲染 72ppi PNG 图片
-      run: |
         sudo apt-get update
         sudo apt-get install -y inkscape
-        inkscape --export-type=png --export-filename=Workouts_Poster.png --export-dpi=72 Workouts_Poster.svg
 
-    - name: 整理输出文件 (包含 SVG 与 PNG)
+    - name: 批量生成海报并渲染 150PPI PNG
       run: |
-        mkdir -p output
-        cp Workouts_Poster.png "output/${CITY}_Workouts_Poster.png"
-        cp Workouts_Poster.svg "output/${CITY}_Workouts_Poster.svg"
+        python - << 'EOF'
+        import json, subprocess, sys
+        from pathlib import Path
+
+        with open('targets.json', 'r', encoding='utf-8') as f:
+            targets = json.load(f)
+
+        Path("output").mkdir(parents=True, exist_ok=True)
+
+        for idx, item in enumerate(targets, 1):
+            city = item['city']
+            title = item.get('title', city)
+            lat = item['lat']
+            lon = item['lon']
+            dist = item['distance']
+            svg_path = f"output/{city}_Workouts_Poster.svg"
+            png_path = f"output/{city}_Workouts_Poster.png"
+
+            print(f"\n==================================================")
+            print(f"[{idx}/{len(targets)}] 正在处理: {city} (标题: {title}, 半径: {dist}m)...")
+            print(f"==================================================")
+
+            # 1. 生成 SVG 矢量海报并注入运动轨迹
+            cmd_svg = [
+                sys.executable, "generate_poster.py",
+                "--lat", str(lat),
+                "--lon", str(lon),
+                "--distance", str(dist),
+                "--city", str(city),
+                "--title", str(title),
+                "--output", svg_path
+            ]
+            subprocess.run(cmd_svg, check=True)
+
+            # 2. 调用 Inkscape 渲染 150 PPI PNG
+            cmd_png = [
+                "inkscape",
+                "--export-type=png",
+                f"--export-filename={png_path}",
+                "--export-dpi=150",
+                svg_path
+            ]
+            subprocess.run(cmd_png, check=True)
+            print(f" 成功完成: {png_path} (150 PPI) 和 {svg_path}")
+
+        print("\n 所有城市的海报生成与渲染已全部顺利完成！")
+        EOF
 
     - name: 打包文件提供下载 (Artifacts)
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.CITY }}_Workouts_Poster
+        name: ${{ env.PACKAGE_NAME }}
         path: output/
         if-no-files-found: error
         retention-days: 7
@@ -135,7 +176,7 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        TAG_NAME="${CITY}_$(date +'%Y%m%d_%H%M%S')"
-        gh release create "$TAG_NAME" "output/${CITY}_Workouts_Poster.png" \
-          --title "${CITY}_Workouts_Poster" \
-          --notes "Workouts Poster for ${CITY} (72 ppi PNG)"
+        TAG_NAME="${PACKAGE_NAME}_$(date +'%Y%m%d_%H%M%S')"
+        gh release create "$TAG_NAME" output/*.png \
+          --title "${PACKAGE_NAME}" \
+          --notes "Workouts Poster (150 PPI PNG) - generated at $(date +'%Y-%m-%d %H:%M:%S UTC')"

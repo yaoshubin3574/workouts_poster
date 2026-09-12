@@ -2,9 +2,9 @@ import argparse
 import math
 import re
 import sys
-from pathlib import Path
-from datetime import datetime
 import xml.etree.ElementTree as ET
+from datetime import datetime
+from pathlib import Path
 
 # 保证在任何环境下控制台输出中文与 Emoji 正常
 sys.stdout.reconfigure(encoding="utf-8")
@@ -27,7 +27,6 @@ def _stitch_open_ways(ways, tol=1e-4):
     for w in ways:
         if len(w) < 2:
             continue
-        # 已经闭合的直接保留
         if (
             len(w) >= 4
             and (w[0][0] - w[-1][0]) ** 2 + (w[0][1] - w[-1][1]) ** 2 <= tol**2
@@ -42,7 +41,6 @@ def _stitch_open_ways(ways, tol=1e-4):
         extended = True
         while extended:
             extended = False
-            # 判断当前链是否已首尾相接闭合
             if (
                 len(current) >= 4
                 and (current[0][0] - current[-1][0]) ** 2
@@ -65,7 +63,7 @@ def _stitch_open_ways(ways, tol=1e-4):
                     matched_idx, match_type = i, "append_reverse"
                     break
                 elif (c_start[0] - o_end[0]) ** 2 + (
-                    c_start[1] - o_start[1]
+                    c_start[1] - o_end[1]
                 ) ** 2 <= tol_sq:
                     matched_idx, match_type = i, "prepend_forward"
                     break
@@ -109,7 +107,6 @@ def _patched_extract_paths(element: dict, *, polygon: bool):
     return _orig_extract_paths(element, polygon=polygon)
 
 
-# 应用补丁覆盖原函数
 _osm.extract_paths = _patched_extract_paths
 # =========================================================
 from terraink_py.api import MercatorProjector
@@ -118,8 +115,16 @@ parser = argparse.ArgumentParser(description="生成运动轨迹海报")
 parser.add_argument("--lat", type=float, required=True, help="中心点纬度")
 parser.add_argument("--lon", type=float, required=True, help="中心点经度")
 parser.add_argument("--distance", type=int, required=True, help="范围(米)")
-parser.add_argument("--city", type=str, required=True, help="城市")
+parser.add_argument("--city", type=str, required=True, help="城市代码或标识")
+parser.add_argument(
+    "--title", type=str, default=None, help="海报上显示的城市标题(默认等于--city)"
+)
+parser.add_argument(
+    "--output", type=str, default="Workouts_Poster.svg", help="输出SVG文件路径"
+)
 args = parser.parse_args()
+
+display_title = (args.title if args.title else args.city).strip()
 
 
 def haversine(lon1, lat1, lon2, lat2):
@@ -162,13 +167,11 @@ def parse_gpx_file(file_path):
         return []
 
     root = None
-    # 方案 1：优先采用标准 XML 解析
     try:
         root = ET.fromstring(content)
     except Exception:
         pass
 
-    # 方案 2：如果标准解析遇到命名空间异常（如前缀未声明），彻底清洗命名空间与前缀
     if root is None:
         try:
             cleaned = re.sub(r'\s+xmlns(?::\w+)?=["\'][^"\']*["\']', "", content)
@@ -179,7 +182,6 @@ def parse_gpx_file(file_path):
             print(f"⚠️ 解析 GPX XML 失败 {file_path}: {e}")
             return []
 
-    # 统一剥离标签中的 {namespace} 前缀，兼容所有运动软件
     for elem in root.iter():
         if isinstance(elem.tag, str) and "}" in elem.tag:
             elem.tag = elem.tag.split("}", 1)[1]
@@ -192,19 +194,21 @@ def parse_gpx_file(file_path):
     stem_name = Path(file_path).stem.lower()
     for trk in trks:
         trk_type = (
-            trk.findtext("type")
-            or root.findtext(".//type")
-            or trk.findtext("name")
-            or root.findtext(".//name")
-            or stem_name
-        ).strip().lower()
+            (
+                trk.findtext("type")
+                or root.findtext(".//type")
+                or trk.findtext("name")
+                or root.findtext(".//name")
+                or stem_name
+            )
+            .strip()
+            .lower()
+        )
 
         if any(k in trk_type for k in ["cycl", "ride", "bike", "velo"]):
             m_type = "Cycling"
-        elif any(k in trk_type for k in ["hike", "hiking", "mount"]):
-            m_type = "Hike"
-        elif any(k in trk_type for k in ["walk"]):
-            m_type = "Walk"
+        elif any(k in trk_type for k in ["hike", "hiking", "mount", "walk"]):
+            m_type = "Hike"  # 💥 walk 与 hike 统一归入 Hike 运动类别
         else:
             m_type = "Run"
 
@@ -217,7 +221,12 @@ def parse_gpx_file(file_path):
         for pt in pts:
             try:
                 lat_str = pt.get("lat") or pt.get("latitude") or pt.get("Lat")
-                lon_str = pt.get("lon") or pt.get("lng") or pt.get("longitude") or pt.get("Lon")
+                lon_str = (
+                    pt.get("lon")
+                    or pt.get("lng")
+                    or pt.get("longitude")
+                    or pt.get("Lon")
+                )
                 if lat_str is None or lon_str is None:
                     continue
                 lat = float(lat_str)
@@ -247,12 +256,12 @@ def parse_gpx_file(file_path):
         if len(points) < 2:
             continue
 
-        # 计算真实累计距离 (米)
         dist_m = 0.0
         for i in range(len(points) - 1):
-            dist_m += haversine(points[i][0], points[i][1], points[i + 1][0], points[i + 1][1])
+            dist_m += haversine(
+                points[i][0], points[i][1], points[i + 1][0], points[i + 1][1]
+            )
 
-        # 计算运动总时间 (秒)
         time_s = 0.0
         if len(times) >= 2:
             t_start = parse_iso_time(times[0])
@@ -260,14 +269,12 @@ def parse_gpx_file(file_path):
             if t_start and t_end:
                 time_s = max(0.0, (t_end - t_start).total_seconds())
 
-        # 计算累计海拔爬升 (米)
         elev_g = 0.0
         for i in range(len(elevations) - 1):
             diff = elevations[i + 1] - elevations[i]
             if diff > 0:
                 elev_g += diff
 
-        # 计算平均心率
         avg_hr = (sum(hrs) / len(hrs)) if hrs else 0.0
 
         activities.append((points, m_type, dist_m, time_s, avg_hr, elev_g))
@@ -279,11 +286,11 @@ print(f"步骤 1/3：正在生成 {args.distance}m 范围的基础地图...")
 
 result = generate_poster(
     PosterRequest(
-        output=Path("./base-map"),
+        output=Path(f"./base-map-{args.city}"),
         formats=("svg",),
         lat=args.lat,
         lon=args.lon,
-        title=args.city,
+        title=display_title,
         subtitle="",
         theme="dark",
         width_cm=21,
@@ -300,7 +307,6 @@ width_px = result.size.width
 height_px = result.size.height
 projector = MercatorProjector.from_bounds(poster_bounds, width_px, height_px)
 
-# 💥 优先读取 .gpx 目录，同时兼顾 GPX 和 gpx（包括多级子目录）
 gpx_candidates = [Path(".gpx"), Path("GPX"), Path("gpx"), Path("data")]
 gpx_files = []
 found_dirs = []
@@ -312,7 +318,6 @@ for d in gpx_candidates:
             gpx_files.extend(found)
             found_dirs.append(d.name)
 
-# 兜底：如果预设目录未发现 GPX，全局递归查找（忽略 .git 与缓存）
 if not gpx_files:
     for p in Path(".").rglob("*"):
         if p.is_file() and p.suffix.lower() == ".gpx" and ".git" not in p.parts:
@@ -320,13 +325,14 @@ if not gpx_files:
     if gpx_files:
         found_dirs.append("workspace")
 
-# 文件去重并排序
 gpx_files = sorted(list(set(gpx_files)))
 
 workout_records = []
 if gpx_files:
     dir_info = "/".join(set(found_dirs)) if found_dirs else "unknown"
-    print(f"📁 成功从 [{dir_info}] 扫描到 {len(gpx_files)} 个 GPX 文件，开始解析轨迹...")
+    print(
+        f"📁 成功从 [{dir_info}] 扫描到 {len(gpx_files)} 个 GPX 文件，开始解析轨迹..."
+    )
     for gpx_file in gpx_files:
         workout_records.extend(parse_gpx_file(gpx_file))
     print(f"✅ 成功加载 {len(workout_records)} 条运动轨迹。")
@@ -340,7 +346,7 @@ color_map = {
     "Cycling": "#22C55E",
     "Ride": "#22C55E",
     "Hike": "#FFC300",
-    "Walk": "#A855F7",
+    "Walk": "#FFC300",
 }
 default_color = "#06D6A0"
 line_width = max(width_px * 0.0010, 0.75)
@@ -350,8 +356,6 @@ run_dist_km = ride_dist_km = hike_dist_km = total_dist_km = 0
 total_elev_g = total_weighted_hr = total_time_s = 0
 
 run_routes, other_routes = [], []
-
-# 海报画布可视经纬度范围
 pb = poster_bounds
 
 for points, m_type, dist_m, time_s, avg_hr, elev_g in workout_records:
@@ -361,10 +365,8 @@ for points, m_type, dist_m, time_s, avg_hr, elev_g in workout_records:
     in_region = False
     for point in points:
         p_lon, p_lat = point[0], point[1]
-        # 判断轨迹是否进入海报视口或处于搜索半径内
-        if (
-            haversine(p_lon, p_lat, args.lon, args.lat) <= args.distance
-            or (pb.west <= p_lon <= pb.east and pb.south <= p_lat <= pb.north)
+        if haversine(p_lon, p_lat, args.lon, args.lat) <= args.distance or (
+            pb.west <= p_lon <= pb.east and pb.south <= p_lat <= pb.north
         ):
             in_region = True
             break
@@ -376,14 +378,14 @@ for points, m_type, dist_m, time_s, avg_hr, elev_g in workout_records:
         run_routes.append((points, m_type))
         run_count += 1
         run_dist_km += dist_m / 1000.0
-    else:
+    elif m_type in ["Cycling", "Ride"]:
         other_routes.append((points, m_type))
-        if m_type in ["Cycling", "Ride"]:
-            ride_count += 1
-            ride_dist_km += dist_m / 1000.0
-        elif m_type == "Hike":
-            hike_count += 1
-            hike_dist_km += dist_m / 1000.0
+        ride_count += 1
+        ride_dist_km += dist_m / 1000.0
+    else:  # Hike 与 Walk 全部合并统计到 Hike
+        other_routes.append((points, "Hike"))
+        hike_count += 1
+        hike_dist_km += dist_m / 1000.0
 
     total_count += 1
     total_dist_km += dist_m / 1000.0
@@ -392,8 +394,8 @@ for points, m_type, dist_m, time_s, avg_hr, elev_g in workout_records:
     total_time_s += time_s
 
 print(
-    f"📍 匹配到当前海报区域（{args.city} 半径 {args.distance}m）的运动记录：{total_count} 条 "
-    f"（跑步: {run_count}, 骑行: {ride_count}, 徒步: {hike_count}）"
+    f"📍 匹配到当前海报区域（{display_title} 半径 {args.distance}m）的运动记录：{total_count} 条 "
+    f"（跑步: {run_count}, 骑行: {ride_count}, 徒步/步行: {hike_count}）"
 )
 
 total_avg_hr = total_weighted_hr / total_time_s if total_time_s > 0 else 0
@@ -427,24 +429,13 @@ svg_injection_lines.append("</g>")
 with open(result.files[0], "r", encoding="utf-8") as f:
     svg_content = f.read()
 
-
-# ==========================================
-# 💥 1. 精细化黑夜暗金滤镜（按图层精准着色） 💥
-# ==========================================
 THEME_COLOR_MAP = {
-    # 陆地底色 -> 纯黑
     "#0a1628": "#000000",
-    # 水系-> 深邃水体蓝
     "#061020": "#152b42",
-    # 山体、林地、自然公园）-> 沉稳墨绿
     "#0f2235": "#0a120e",
-    # 建筑物面要素 -> 极暗微弱灰（消除市区高亮白斑噪声）
     "#6e5a45": "#181a1d",
-    # 主干道 / 高速路 -> 适度结构的雅致灰
     "#c99c37": "#3d424a",
-    # 次干道 -> 暗灰色
     "#8a6820": "#282a30",
-    # 支路与步道 -> 极暗灰微弱纹理
     "#333530": "#1e2024",
     "#272c2e": "#1c1d21",
     "#414033": "#1e2024",
@@ -456,7 +447,6 @@ def smart_color_mapper(match):
     hex_color = match.group(0).lower()
     if hex_color in THEME_COLOR_MAP:
         return THEME_COLOR_MAP[hex_color]
-    # 其余未知颜色做兜底调暗
     try:
         val = hex_color.lstrip("#")
         r, g, b = (int(val[i : i + 2], 16) for i in (0, 2, 4))
@@ -466,10 +456,7 @@ def smart_color_mapper(match):
         return match.group(0)
 
 
-# 执行精准替换
 svg_content = re.sub(r"#[a-fA-F0-9]{6}\b", smart_color_mapper, svg_content)
-
-# 净化底层：一键抹除所有原生遮罩、文字和线条
 svg_content = re.sub(
     r"<defs>.*?</defs>", "", svg_content, flags=re.IGNORECASE | re.DOTALL
 )
@@ -479,12 +466,7 @@ svg_content = re.sub(
 )
 svg_content = re.sub(r"<line\b.*?>", "", svg_content, flags=re.IGNORECASE | re.DOTALL)
 
-
-# ==========================================
-# 💥 2. 极简自适应排版 (纯黑背景下的白字排版) 💥
-# ==========================================
 text_color_fg = "#f0f0f0"
-
 city_y_pos = height_px * 0.85
 stats_y_pos = height_px * 0.885
 row2_y = height_px * 0.027
@@ -493,14 +475,12 @@ row3_y = height_px * 0.053
 f_large = width_px * 0.022
 f_small = width_px * 0.018
 
-# 渲染城市标题
 city_letter_spacing = f"{width_px * 0.045:.1f}"
-city_title_block = f'<text x="{width_px / 2:.1f}" y="{city_y_pos:.1f}" font-family="Arial, Helvetica, sans-serif" font-size="{width_px * 0.06:.1f}" font-weight="bold" fill="{text_color_fg}" xml:space="preserve" letter-spacing="{city_letter_spacing}" text-anchor="middle" opacity="0.9">{args.city.upper()}</text>\n'
+city_title_block = f'<text x="{width_px / 2:.1f}" y="{city_y_pos:.1f}" font-family="Arial, Helvetica, sans-serif" font-size="{width_px * 0.06:.1f}" font-weight="bold" fill="{text_color_fg}" xml:space="preserve" letter-spacing="{city_letter_spacing}" text-anchor="middle" opacity="0.9">{display_title.upper()}</text>\n'
 
-# 内联的竖线分隔符
 pipe_str = f'<tspan xml:space="preserve" fill="{text_color_fg}" opacity="0.25" font-size="{f_large * 1.1:.1f}">   |   </tspan>'
 
-# 第一行
+# 💥 第一行：Walk 与 Hike 合并展示在 Hikes 项中
 row1_text = (
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{run_count}</tspan><tspan xml:space="preserve"> Runs </tspan>'
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{run_dist_km:.1f}</tspan><tspan xml:space="preserve"> km</tspan>'
@@ -512,14 +492,12 @@ row1_text = (
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{hike_dist_km:.1f}</tspan><tspan xml:space="preserve"> km</tspan>'
 )
 
-# 第二行
 row2_text = (
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{int(total_avg_hr)}</tspan><tspan xml:space="preserve"> BPM Avg Heart Rate</tspan>'
     f"{pipe_str}"
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{int(total_elev_g)}</tspan><tspan xml:space="preserve"> m Elevation Gain</tspan>'
 )
 
-# 第三行
 row3_text = (
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{total_count}</tspan><tspan xml:space="preserve"> Workouts Total </tspan>'
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{total_dist_km:.1f}</tspan><tspan xml:space="preserve"> km / </tspan>'
@@ -527,7 +505,6 @@ row3_text = (
     f'<tspan font-weight="bold" font-size="{f_large:.1f}">{total_time_m}</tspan><tspan xml:space="preserve"> min</tspan>'
 )
 
-# 将三行文本组合成块
 stats_block = (
     f'<g id="stats_block" transform="translate({width_px / 2:.1f}, {stats_y_pos:.1f})" fill="{text_color_fg}" font-family="Arial, Helvetica, sans-serif" font-size="{f_small:.1f}" text-anchor="middle">\n'
     f'  <text transform="translate(0, 0)">{row1_text}</text>\n'
@@ -536,13 +513,13 @@ stats_block = (
     f"</g>\n"
 )
 
-# 最终注入
 final_injection = ["\n".join(svg_injection_lines), city_title_block, stats_block]
 
 if "</svg>" in svg_content:
     svg_content = svg_content.replace("</svg>", "\n".join(final_injection) + "\n</svg>")
 
-final_path = "Workouts_Poster.svg"
+final_path = args.output if args.output else "Workouts_Poster.svg"
+Path(final_path).parent.mkdir(parents=True, exist_ok=True)
 with open(final_path, "w", encoding="utf-8") as f:
     f.write(svg_content)
 
