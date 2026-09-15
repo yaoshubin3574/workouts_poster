@@ -419,7 +419,7 @@ color_map = {
     "Walk": "#FFC300",
 }
 default_color = "#06D6A0"
-line_width = max(width_px * 0.0007, 0.6)
+line_width = max(width_px * 0.0006, 0.6)
 
 run_count = ride_count = hike_count = total_count = 0
 run_dist_km = ride_dist_km = hike_dist_km = total_dist_km = 0

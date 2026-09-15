@@ -72,8 +72,8 @@ jobs:
             'JIAOZUO (13km)':       {'city': 'JIAOZUO',      'title': 'JIAOZUO',  'distance': '13000', 'lon': '113.2526282', 'lat': '35.1946971'},
             'JINHUA (6.6km)':       {'city': 'JINHUA',       'title': 'JINHUA',   'distance': '6600',  'lon': '119.5345237', 'lat': '29.1160378'},
             'NINGBO (8km)':         {'city': 'NINGBO',       'title': 'NINGBO',   'distance': '8000',  'lon': '121.4667517', 'lat': '29.5165939'},
-            'TAIZHOU-2000 (2.0km)': {'city': 'TAIZHOU-2000', 'title': 'TAIZHOU', 'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
-            'TAIZHOU-2200 (2.2km)': {'city': 'TAIZHOU-2200', 'title': 'TAIZHOU', 'distance': '2200',  'lon': '121.2226776', 'lat': '28.9152824'},
+            'TAIZHOU-HUIXI (2.0km)': {'city': 'TAIZHOU-HUIXI', 'title': 'TAIZHOU', 'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
+            'TAIZHOU-MIAOYANG (2.2km)': {'city': 'TAIZHOU-MIAOYANG', 'title': 'TAIZHOU', 'distance': '2200',  'lon': '121.2226776', 'lat': '28.9152824'},
             'XINXIANG (20km)':      {'city': 'XINXIANG',     'title': 'XINXIANG', 'distance': '20000', 'lon': '113.9313797', 'lat': '35.2856284'},
         }
 
