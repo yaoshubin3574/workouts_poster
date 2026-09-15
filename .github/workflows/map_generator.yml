@@ -9,16 +9,16 @@ on:
         type: choice
         default: 'ALL CITIES '
         options:
-          - 'ALL CITIES '
-          - 'CUSTOM '
-          - 'HANGZHOU (4.6km)'
-          - 'HENAN (65km)'
-          - 'JIAOZUO (13km)'
-          - 'JINHUA (6.6km)'
-          - 'NINGBO (8km)'
-          - 'TAIZHOU-2000 (2.0km)'
-          - 'TAIZHOU-2200 (2.2km)'
-          - 'XINXIANG (20km)'
+          - 'ALL CITIES'
+          - 'CUSTOM'
+          - 'HANGZHOU'
+          - 'HENAN'
+          - 'JIAOZUO'
+          - 'JINHUA'
+          - 'NINGBO'
+          - 'TAIZHOU-HUIXI'
+          - 'TAIZHOU-MIAOYANG'
+          - 'XINXIANG'
       city:
         description: '城市 '
         required: false
@@ -67,14 +67,14 @@ jobs:
 
         # 按字母 A-Z 严格排序的预设数据列表
         presets = {
-            'HANGZHOU (4.6km)':     {'city': 'HANGZHOU',     'title': 'HANGZHOU', 'distance': '4600',  'lon': '120.1390416', 'lat': '30.2250866'},
-            'HENAN (65km)':         {'city': 'HENAN',        'title': 'HENAN',    'distance': '65000', 'lon': '113.6178735', 'lat': '35.1197434'},
-            'JIAOZUO (13km)':       {'city': 'JIAOZUO',      'title': 'JIAOZUO',  'distance': '13000', 'lon': '113.2526282', 'lat': '35.1946971'},
-            'JINHUA (6.6km)':       {'city': 'JINHUA',       'title': 'JINHUA',   'distance': '6600',  'lon': '119.5345237', 'lat': '29.1160378'},
-            'NINGBO (8km)':         {'city': 'NINGBO',       'title': 'NINGBO',   'distance': '8000',  'lon': '121.4667517', 'lat': '29.5165939'},
-            'TAIZHOU-HUIXI (2.0km)': {'city': 'TAIZHOU-HUIXI', 'title': 'TAIZHOU', 'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
-            'TAIZHOU-MIAOYANG (2.2km)': {'city': 'TAIZHOU-MIAOYANG', 'title': 'TAIZHOU', 'distance': '2200',  'lon': '121.2226776', 'lat': '28.9160953'},
-            'XINXIANG (20km)':      {'city': 'XINXIANG',     'title': 'XINXIANG', 'distance': '20000', 'lon': '113.9313797', 'lat': '35.2856284'},
+            'HANGZHOU':     {'city': 'HANGZHOU',     'title': 'HANGZHOU', 'distance': '4600',  'lon': '120.1390416', 'lat': '30.2250866'},
+            'HENAN':         {'city': 'HENAN',        'title': 'HENAN',    'distance': '65000', 'lon': '113.6178735', 'lat': '35.1197434'},
+            'JIAOZUO':       {'city': 'JIAOZUO',      'title': 'JIAOZUO',  'distance': '13000', 'lon': '113.2526282', 'lat': '35.1946971'},
+            'JINHUA':       {'city': 'JINHUA',       'title': 'JINHUA',   'distance': '6600',  'lon': '119.5345237', 'lat': '29.1160378'},
+            'NINGBO':         {'city': 'NINGBO',       'title': 'NINGBO',   'distance': '8000',  'lon': '121.4667517', 'lat': '29.5165939'},
+            'TAIZHOU-HUIXI': {'city': 'TAIZHOU-HUIXI', 'title': 'TAIZHOU', 'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
+            'TAIZHOU-MIAOYANG': {'city': 'TAIZHOU-MIAOYANG', 'title': 'TAIZHOU', 'distance': '2200',  'lon': '121.2226776', 'lat': '28.9160953'},
+            'XINXIANG':      {'city': 'XINXIANG',     'title': 'XINXIANG', 'distance': '20000', 'lon': '113.9313797', 'lat': '35.2856284'},
         }
 
         if preset.startswith('ALL CITIES'):
