@@ -1,7 +1,9 @@
 import argparse
+import json
 import math
 import re
 import sys
+import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
@@ -171,7 +173,11 @@ _osm.classify_polygon_layer = _patched_classify_polygon_layer
 # =========================================================
 from terraink_py.api import MercatorProjector
 
-parser = argparse.ArgumentParser(description="生成运动轨迹海报")
+DEFAULT_ACTIVITIES_URL = (
+    "https://raw.githubusercontent.com/yaoshubin3574/workouts_page/master/src/static/activities.json"
+)
+
+parser = argparse.ArgumentParser(description="生成运动轨迹海报 (直连 workouts_page 数据源)")
 parser.add_argument("--lat", type=float, required=True, help="中心点纬度")
 parser.add_argument("--lon", type=float, required=True, help="中心点经度")
 parser.add_argument("--distance", type=int, required=True, help="范围(米)")
@@ -181,6 +187,12 @@ parser.add_argument(
 )
 parser.add_argument(
     "--output", type=str, default="Workouts_Poster.svg", help="输出SVG文件路径"
+)
+parser.add_argument(
+    "--activities",
+    type=str,
+    default=DEFAULT_ACTIVITIES_URL,
+    help="运动数据来源 (URL 或 本地 JSON 文件路径，默认直连 workouts_page 仓库)",
 )
 args = parser.parse_args()
 
@@ -199,6 +211,65 @@ def haversine(lon1, lat1, lon2, lat2):
     return R * c
 
 
+def decode_polyline(polyline_str):
+    """将 Google Polyline 编码字符串解码为 [[lon, lat], ...] 经纬度列表"""
+    if not polyline_str:
+        return []
+    index, lat, lng = 0, 0, 0
+    coordinates = []
+    changes = {"latitude": 0, "longitude": 0}
+    while index < len(polyline_str):
+        for unit in ["latitude", "longitude"]:
+            shift, result = 0, 0
+            while True:
+                byte = ord(polyline_str[index]) - 63
+                index += 1
+                result |= (byte & 0x1F) << shift
+                shift += 5
+                if not byte >= 0x20:
+                    break
+            if result & 1:
+                changes[unit] = ~(result >> 1)
+            else:
+                changes[unit] = result >> 1
+        lat += changes["latitude"]
+        lng += changes["longitude"]
+        coordinates.append([lng / 100000.0, lat / 100000.0])
+    return coordinates
+
+
+def parse_duration_to_seconds(val):
+    """解析运动时长（支持 'HH:MM:SS', 'MM:SS', 浮点/整数秒数）为秒数"""
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    val_str = str(val).strip()
+    if " " in val_str:
+        val_str = val_str.split(" ")[-1]
+    try:
+        parts = val_str.split(":")
+        if len(parts) == 3:
+            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+        elif len(parts) == 2:
+            return float(parts[0]) * 60 + float(parts[1])
+        return float(val_str)
+    except ValueError:
+        return 0.0
+
+
+def normalize_activity_type(raw_type):
+    """归一化运动类型为三类：Run, Cycling, Hike"""
+    t = str(raw_type or "").strip().lower()
+    if any(k in t for k in ["cycl", "ride", "bike", "velo"]):
+        return "Cycling"
+    elif any(k in t for k in ["hike", "hiking", "mount", "walk"]):
+        return "Hike"
+    elif any(k in t for k in ["run", "jog"]):
+        return "Run"
+    return "Run"
+
+
 def parse_iso_time(t_str):
     if not t_str:
         return None
@@ -215,7 +286,7 @@ def parse_iso_time(t_str):
 
 
 def parse_gpx_file(file_path):
-    """解析单个 GPX 原始文件，提取完整高精度轨迹点及运动统计数据"""
+    """[备用兜底] 解析单个 GPX 原始文件"""
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
@@ -227,13 +298,11 @@ def parse_gpx_file(file_path):
         return []
 
     root = None
-    # 方案 1：优先采用标准 XML 解析
     try:
         root = ET.fromstring(content)
     except Exception:
         pass
 
-    # 方案 2：如果标准解析遇到命名空间异常（如前缀未声明），彻底清洗命名空间与前缀
     if root is None:
         try:
             cleaned = re.sub(r'\s+xmlns(?::\w+)?=["\'][^"\']*["\']', "", content)
@@ -244,7 +313,6 @@ def parse_gpx_file(file_path):
             print(f"⚠️ 解析 GPX XML 失败 {file_path}: {e}")
             return []
 
-    # 统一剥离标签中的 {namespace} 前缀，兼容所有运动软件
     for elem in root.iter():
         if isinstance(elem.tag, str) and "}" in elem.tag:
             elem.tag = elem.tag.split("}", 1)[1]
@@ -268,12 +336,7 @@ def parse_gpx_file(file_path):
             .lower()
         )
 
-        if any(k in trk_type for k in ["cycl", "ride", "bike", "velo"]):
-            m_type = "Cycling"
-        elif any(k in trk_type for k in ["hike", "hiking", "mount", "walk"]):
-            m_type = "Hike"  # walk 与 hike 统一归入 Hike 运动大类
-        else:
-            m_type = "Run"
+        m_type = normalize_activity_type(trk_type)
 
         points = []
         times = []
@@ -319,14 +382,12 @@ def parse_gpx_file(file_path):
         if len(points) < 2:
             continue
 
-        # 计算真实累计距离 (米)
         dist_m = 0.0
         for i in range(len(points) - 1):
             dist_m += haversine(
                 points[i][0], points[i][1], points[i + 1][0], points[i + 1][1]
             )
 
-        # 计算运动总时间 (秒)
         time_s = 0.0
         if len(times) >= 2:
             t_start = parse_iso_time(times[0])
@@ -334,19 +395,97 @@ def parse_gpx_file(file_path):
             if t_start and t_end:
                 time_s = max(0.0, (t_end - t_start).total_seconds())
 
-        # 计算累计海拔爬升 (米)
         elev_g = 0.0
         for i in range(len(elevations) - 1):
             diff = elevations[i + 1] - elevations[i]
             if diff > 0:
                 elev_g += diff
 
-        # 计算平均心率
         avg_hr = (sum(hrs) / len(hrs)) if hrs else 0.0
-
         activities.append((points, m_type, dist_m, time_s, avg_hr, elev_g))
 
     return activities
+
+
+def load_activities_data(source):
+    """从 workouts_page 的 activities.json (URL 或 本地文件) 加载全量运动数据"""
+    data = []
+    source_str = str(source).strip()
+
+    if source_str.startswith("http://") or source_str.startswith("https://"):
+        print(f"🌐 正在从 workouts_page 远程仓库获取运动数据...")
+        print(f"   URL: {source_str}")
+        try:
+            req = urllib.request.Request(
+                source_str, headers={"User-Agent": "workouts_poster/2.0"}
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw_bytes = resp.read()
+                data = json.loads(raw_bytes.decode("utf-8"))
+            print(f"✅ 成功从远程拉取 {len(data)} 条运动记录！")
+        except Exception as e:
+            print(f"⚠️ 远程获取数据失败: {e}")
+            for cache_candidate in ["activities.json", "src/static/activities.json"]:
+                if Path(cache_candidate).exists():
+                    print(f"🔄 自动切换使用本地缓存数据: {cache_candidate}")
+                    try:
+                        with open(cache_candidate, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        break
+                    except Exception:
+                        pass
+    else:
+        p = Path(source_str)
+        if p.exists():
+            print(f"📁 正在从本地文件读取运动数据: {p} ...")
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                print(f"✅ 成功读取 {len(data)} 条运动记录！")
+            except Exception as e:
+                print(f"❌ 读取本地数据失败: {e}")
+        else:
+            print(f"⚠️ 指定的本地数据文件不存在: {p}")
+
+    workout_records = []
+    if data:
+        for item in data:
+            polyline_str = item.get("summary_polyline")
+            if not polyline_str:
+                continue
+            points = decode_polyline(polyline_str)
+            if not points or len(points) < 2:
+                continue
+
+            m_type = normalize_activity_type(item.get("type"))
+            dist_m = float(item.get("distance") or 0.0)
+            if dist_m <= 0 and len(points) >= 2:
+                for i in range(len(points) - 1):
+                    dist_m += haversine(
+                        points[i][0], points[i][1], points[i + 1][0], points[i + 1][1]
+                    )
+
+            time_s = parse_duration_to_seconds(item.get("moving_time"))
+            avg_hr = float(item.get("average_heartrate") or 0.0)
+            elev_g = float(item.get("elevation_gain") or 0.0)
+
+            workout_records.append((points, m_type, dist_m, time_s, avg_hr, elev_g))
+
+    # 兜底保障：若未获取到任何 JSON 记录，检测是否存在历史 .gpx 目录进行兼容回退
+    if not workout_records:
+        gpx_candidates = [Path(".gpx"), Path("GPX"), Path("gpx")]
+        gpx_files = []
+        for d in gpx_candidates:
+            if d.exists() and d.is_dir():
+                gpx_files.extend(
+                    [p for p in d.rglob("*") if p.is_file() and p.suffix.lower() == ".gpx"]
+                )
+        if gpx_files:
+            print(f"🔄 检测到本地 .gpx 备份目录，正在进行离线回退解析 ({len(gpx_files)} 个文件)...")
+            for gf in sorted(list(set(gpx_files))):
+                workout_records.extend(parse_gpx_file(gf))
+
+    return workout_records
 
 
 print(f"步骤 1/3：正在生成 {args.distance}m 范围的基础地图...")
@@ -367,47 +506,15 @@ result = generate_poster(
     )
 )
 
-print("步骤 2/3：从 .gpx 目录读取并汇总原始运动数据...")
+print("步骤 2/3：从 workouts_page 读取并汇总运动数据...")
 
 poster_bounds = result.bounds.poster_bounds
 width_px = result.size.width
 height_px = result.size.height
 projector = MercatorProjector.from_bounds(poster_bounds, width_px, height_px)
 
-# 💥 优先读取 .gpx 目录，同时兼顾 GPX 和 gpx（包括多级子目录）
-gpx_candidates = [Path(".gpx"), Path("GPX"), Path("gpx"), Path("data")]
-gpx_files = []
-found_dirs = []
-
-for d in gpx_candidates:
-    if d.exists() and d.is_dir():
-        found = [p for p in d.rglob("*") if p.is_file() and p.suffix.lower() == ".gpx"]
-        if found:
-            gpx_files.extend(found)
-            found_dirs.append(d.name)
-
-# 兜底：如果预设目录未发现 GPX，全局递归查找（忽略 .git 与缓存）
-if not gpx_files:
-    for p in Path(".").rglob("*"):
-        if p.is_file() and p.suffix.lower() == ".gpx" and ".git" not in p.parts:
-            gpx_files.append(p)
-    if gpx_files:
-        found_dirs.append("workspace")
-
-# 文件去重并排序
-gpx_files = sorted(list(set(gpx_files)))
-
-workout_records = []
-if gpx_files:
-    dir_info = "/".join(set(found_dirs)) if found_dirs else "unknown"
-    print(
-        f"📁 成功从 [{dir_info}] 扫描到 {len(gpx_files)} 个 GPX 文件，开始解析轨迹..."
-    )
-    for gpx_file in gpx_files:
-        workout_records.extend(parse_gpx_file(gpx_file))
-    print(f"✅ 成功加载 {len(workout_records)} 条运动轨迹。")
-else:
-    print("⚠️ 警告：在 .gpx / GPX 目录下未找到任何 .gpx 文件！")
+workout_records = load_activities_data(args.activities)
+print(f"✅ 成功载入运动轨迹库：共 {len(workout_records)} 条有效轨迹。")
 
 print("步骤 3/3：注入轨迹与排版...")
 
@@ -423,11 +530,10 @@ line_width = max(width_px * 0.0006, 0.6)
 
 run_count = ride_count = hike_count = total_count = 0
 run_dist_km = ride_dist_km = hike_dist_km = total_dist_km = 0
-total_elev_g = total_weighted_hr = total_time_s = 0
+total_elev_g = total_weighted_hr = total_hr_time_s = total_time_s = 0
 
 run_routes, other_routes = [], []
 
-# 海报画布可视经纬度范围
 pb = poster_bounds
 
 for points, m_type, dist_m, time_s, avg_hr, elev_g in workout_records:
@@ -463,15 +569,17 @@ for points, m_type, dist_m, time_s, avg_hr, elev_g in workout_records:
     total_count += 1
     total_dist_km += dist_m / 1000.0
     total_elev_g += elev_g
-    total_weighted_hr += avg_hr * time_s
     total_time_s += time_s
+    if avg_hr > 0 and time_s > 0:
+        total_weighted_hr += avg_hr * time_s
+        total_hr_time_s += time_s
 
 print(
     f"📍 匹配到当前海报区域（{display_title} 半径 {args.distance}m）的运动记录：{total_count} 条 "
     f"（跑步: {run_count}, 骑行: {ride_count}, 徒步/步行: {hike_count}）"
 )
 
-total_avg_hr = total_weighted_hr / total_time_s if total_time_s > 0 else 0
+total_avg_hr = total_weighted_hr / total_hr_time_s if total_hr_time_s > 0 else 0
 total_time_h = int(total_time_s // 3600)
 total_time_m = int((total_time_s % 3600) // 60)
 
@@ -530,13 +638,12 @@ def smart_color_mapper(match):
     hex_color = match.group(0).lower()
     if hex_color in THEME_COLOR_MAP:
         return THEME_COLOR_MAP[hex_color]
-    # 其余未知颜色做兜底调暗
     try:
         val = hex_color.lstrip("#")
         r, g, b = (int(val[i : i + 2], 16) for i in (0, 2, 4))
         lum = 0.299 * r + 0.587 * g + 0.114 * b
         return "#000000" if lum < 35 else "#25282e"
-    except:
+    except Exception:
         return match.group(0)
 
 
@@ -620,4 +727,4 @@ Path(final_path).parent.mkdir(parents=True, exist_ok=True)
 with open(final_path, "w", encoding="utf-8") as f:
     f.write(svg_content)
 
-print(f"\n大功告成！海报已成功生成：{final_path}")
+print(f"\n🎉 大功告成！海报已成功生成：{final_path}")
