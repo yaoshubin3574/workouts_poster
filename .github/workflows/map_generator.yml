@@ -7,7 +7,7 @@ on:
         description: '预设城市'
         required: true
         type: choice
-        default: 'ALL CITIES '
+        default: 'ALL CITIES'
         options:
           - 'ALL CITIES'
           - 'CUSTOM'
@@ -80,7 +80,7 @@ jobs:
         if preset.startswith('ALL CITIES'):
             targets = list(presets.values())
             pkg_name = "ALL_CITIES_Workouts_Poster"
-            print(f" 模式：ALL CITIES，将批量生成全部 {len(targets)} 个预设城市的海报！")
+            print(f"模式：ALL CITIES，将批量生成全部 {len(targets)} 个预设城市的海报！")
         elif preset in presets and not preset.startswith('CUSTOM'):
             data = presets[preset]
             city = custom_city if custom_city else data['city']
@@ -90,18 +90,17 @@ jobs:
             dist = custom_dist if custom_dist else data['distance']
             targets = [{'city': city, 'title': title, 'distance': dist, 'lon': lon, 'lat': lat}]
             pkg_name = f"{city}_Workouts_Poster"
-            print(f" 采用预设配置 [{preset}]: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
+            print(f"采用预设配置 [{preset}]: 城市={city}, 纬度={lat}, 经度={lon}, 范围={dist}米")
         else:
             if not (custom_city and custom_lat and custom_lon and custom_dist):
-                raise ValueError(" 选择 CUSTOM 模式时，必须完整填写 city, lat, lon, distance 四个参数！")
+                raise ValueError("选择 CUSTOM 模式时，必须完整填写 city, lat, lon, distance 四个参数！")
             targets = [{'city': custom_city, 'title': custom_city, 'distance': custom_dist, 'lon': custom_lon, 'lat': custom_lat}]
             pkg_name = f"{custom_city}_Workouts_Poster"
-            print(f" 采用自定义配置: 城市={custom_city}, 纬度={custom_lat}, 经度={custom_lon}, 范围={custom_dist}米")
+            print(f"采用自定义配置: 城市={custom_city}, 纬度={custom_lat}, 经度={custom_lon}, 范围={custom_dist}米")
 
         with open('targets.json', 'w', encoding='utf-8') as f:
             json.dump(targets, f, ensure_ascii=False, indent=2)
 
-        # 写入环境变量供后续 Step 使用
         env_file = os.getenv('GITHUB_ENV')
         with open(env_file, 'a', encoding='utf-8') as f:
             f.write(f"PACKAGE_NAME={pkg_name}\n")
@@ -119,6 +118,13 @@ jobs:
         python - << 'EOF'
         import json, subprocess, sys
         from pathlib import Path
+
+        # 1. 预先从 workouts_page 下载全量最新运动数据
+        activities_file = Path("activities.json")
+        data_url = "https://raw.githubusercontent.com/yaoshubin3574/workouts_page/master/src/static/activities.json"
+        print(f"📥 正在从 workouts_page 下载最新运动轨迹数据: {data_url}")
+        subprocess.run(["curl", "-sSL", "-o", str(activities_file), data_url], check=True)
+        print(f"✅ 运动数据下载完成: {activities_file} ({activities_file.stat().st_size / 1024:.1f} KB)\n")
 
         with open('targets.json', 'r', encoding='utf-8') as f:
             targets = json.load(f)
@@ -138,7 +144,7 @@ jobs:
             print(f"[{idx}/{len(targets)}] 正在处理: {city} (标题: {title}, 半径: {dist}m)...")
             print(f"==================================================")
 
-            # 1. 生成 SVG 矢量海报并注入运动轨迹
+            # 2. 生成 SVG 矢量海报并注入 workouts_page 轨迹
             cmd_svg = [
                 sys.executable, "generate_poster.py",
                 "--lat", str(lat),
@@ -146,11 +152,12 @@ jobs:
                 "--distance", str(dist),
                 "--city", str(city),
                 "--title", str(title),
-                "--output", svg_path
+                "--output", svg_path,
+                "--activities", str(activities_file)
             ]
             subprocess.run(cmd_svg, check=True)
 
-            # 2. 调用 Inkscape 渲染 300 PPI PNG
+            # 3. 调用 Inkscape 渲染 300 PPI PNG
             cmd_png = [
                 "inkscape",
                 "--export-type=png",
@@ -159,9 +166,9 @@ jobs:
                 svg_path
             ]
             subprocess.run(cmd_png, check=True)
-            print(f" 成功完成: {png_path} (300 PPI) 和 {svg_path}")
+            print(f"✅ 成功完成: {png_path} (300 PPI) 和 {svg_path}")
 
-        print("\n 所有城市的海报生成与渲染已全部顺利完成！")
+        print("\n🎉 所有城市的海报生成与渲染已全部顺利完成！")
         EOF
 
     - name: 打包文件提供下载 (Artifacts)
