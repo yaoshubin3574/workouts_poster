@@ -8,8 +8,8 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
-# 保证在任何环境下控制台输出中文与 Emoji 正常
-sys.stdout.reconfigure(encoding="utf-8")
+# 保证在任何环境下控制台输出中文与 Emoji 正常，且实时刷新日志
+sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 # =========================================================
 # 🛠️ 补丁 1：修复大型水体(西湖/大江大河/海湾海峡)多边形解析与缝合
@@ -503,6 +503,8 @@ result = generate_poster(
         height_cm=29.7,
         distance_m=args.distance,
         include_buildings=True,
+        show_poster_text=False,
+        include_credits=False,
     )
 )
 
@@ -543,9 +545,9 @@ for points, m_type, dist_m, time_s, avg_hr, elev_g in workout_records:
     in_region = False
     for point in points:
         p_lon, p_lat = point[0], point[1]
-        # 判断轨迹是否进入海报视口或处于搜索半径内
-        if haversine(p_lon, p_lat, args.lon, args.lat) <= args.distance or (
-            pb.west <= p_lon <= pb.east and pb.south <= p_lat <= pb.north
+        # 优先进行廉价的视口矩形边界判断，命中后无需再计算三角函数 haversine
+        if (pb.west <= p_lon <= pb.east and pb.south <= p_lat <= pb.north) or (
+            haversine(p_lon, p_lat, args.lon, args.lat) <= args.distance
         ):
             in_region = True
             break
@@ -607,8 +609,10 @@ for r, t in run_routes:
     add_route_to_svg(r, t)
 svg_injection_lines.append("</g>")
 
-with open(result.files[0], "r", encoding="utf-8") as f:
+base_svg_path = Path(result.files[0])
+with open(base_svg_path, "r", encoding="utf-8") as f:
     svg_content = f.read()
+base_svg_path.unlink(missing_ok=True)
 
 # ==========================================
 # 💥 1. 精细化黑夜暗金滤镜（按图层精准着色） 💥
@@ -633,32 +637,42 @@ THEME_COLOR_MAP = {
     "#4f4b36": "#141517",
 }
 
+_HEX_COLOR_RE = re.compile(r"#[a-fA-F0-9]{6}\b")
+_DEFS_RE = re.compile(r"<defs>.*?</defs>", flags=re.IGNORECASE | re.DOTALL)
+_MASK_RE = re.compile(r'\s*mask="[^"]+"', flags=re.IGNORECASE)
+_TEXT_RE = re.compile(r"<text\b.*?</text>", flags=re.IGNORECASE | re.DOTALL)
+_LINE_RE = re.compile(r"<line\b.*?>", flags=re.IGNORECASE | re.DOTALL)
+_COLOR_CACHE = dict(THEME_COLOR_MAP)
+
 
 def smart_color_mapper(match):
     hex_color = match.group(0).lower()
-    if hex_color in THEME_COLOR_MAP:
-        return THEME_COLOR_MAP[hex_color]
+    cached = _COLOR_CACHE.get(hex_color)
+    if cached is not None:
+        return cached
     try:
         val = hex_color.lstrip("#")
         r, g, b = (int(val[i : i + 2], 16) for i in (0, 2, 4))
         lum = 0.299 * r + 0.587 * g + 0.114 * b
-        return "#000000" if lum < 35 else "#25282e"
+        mapped = "#000000" if lum < 35 else "#25282e"
     except Exception:
-        return match.group(0)
+        mapped = match.group(0)
+    _COLOR_CACHE[hex_color] = mapped
+    return mapped
 
 
 # 执行精准替换
-svg_content = re.sub(r"#[a-fA-F0-9]{6}\b", smart_color_mapper, svg_content)
+svg_content = _HEX_COLOR_RE.sub(smart_color_mapper, svg_content)
 
-# 净化底层：一键抹除所有原生遮罩、文字和线条
-svg_content = re.sub(
-    r"<defs>.*?</defs>", "", svg_content, flags=re.IGNORECASE | re.DOTALL
-)
-svg_content = re.sub(r'\s*mask="[^"]+"', "", svg_content, flags=re.IGNORECASE)
-svg_content = re.sub(
-    r"<text\b.*?</text>", "", svg_content, flags=re.IGNORECASE | re.DOTALL
-)
-svg_content = re.sub(r"<line\b.*?>", "", svg_content, flags=re.IGNORECASE | re.DOTALL)
+# 净化底层：按需抹除原生遮罩、文字和线条（跳过不存在的标签以避免全文件扫描）
+if "<defs" in svg_content or "<DEFS" in svg_content:
+    svg_content = _DEFS_RE.sub("", svg_content)
+if "mask=" in svg_content:
+    svg_content = _MASK_RE.sub("", svg_content)
+if "<text" in svg_content or "<TEXT" in svg_content:
+    svg_content = _TEXT_RE.sub("", svg_content)
+if "<line" in svg_content or "<LINE" in svg_content:
+    svg_content = _LINE_RE.sub("", svg_content)
 
 # ==========================================
 # 💥 2. 极简自适应排版 (纯黑背景下的白字排版) 💥

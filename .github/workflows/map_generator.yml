@@ -35,49 +35,54 @@ on:
         description: '距离/米 '
         required: false
         default: ''
+      refresh_cache:
+        description: '强制刷新 OSM 地图缓存'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
-  build_map:
+  prepare:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
+    outputs:
+      targets: ${{ steps.parse.outputs.targets }}
+      package_name: ${{ steps.parse.outputs.package_name }}
 
     steps:
-    - name: 获取仓库代码
-      uses: actions/checkout@v7
-
-    - name: 设置 Python 3.12
-      uses: actions/setup-python@v7
-      with:
-        python-version: '3.12'
-
-    - name: 解析运行参数与构建目标
+    - name: 解析运行参数与构建矩阵目标
+      id: parse
+      env:
+        INPUT_PRESET: ${{ inputs.preset }}
+        INPUT_CITY: ${{ inputs.city }}
+        INPUT_LAT: ${{ inputs.lat }}
+        INPUT_LON: ${{ inputs.lon }}
+        INPUT_DISTANCE: ${{ inputs.distance }}
       run: |
-        python - << 'EOF'
-        import os, json
+        python3 - << 'EOF'
+        import hashlib, json, os, re
 
-        preset = "${{ github.event.inputs.preset }}".strip()
-        custom_city = "${{ github.event.inputs.city }}".strip()
-        custom_lat = "${{ github.event.inputs.lat }}".strip()
-        custom_lon = "${{ github.event.inputs.lon }}".strip()
-        custom_dist = "${{ github.event.inputs.distance }}".strip()
+        preset = os.environ.get("INPUT_PRESET", "").strip()
+        custom_city = os.environ.get("INPUT_CITY", "").strip()
+        custom_lat = os.environ.get("INPUT_LAT", "").strip()
+        custom_lon = os.environ.get("INPUT_LON", "").strip()
+        custom_dist = os.environ.get("INPUT_DISTANCE", "").strip()
 
         # 按字母 A-Z 严格排序的预设数据列表
         presets = {
-            'HANGZHOU':     {'city': 'HANGZHOU',     'title': 'HANGZHOU', 'distance': '4600',  'lon': '120.1390416', 'lat': '30.2250866'},
-            'HENAN':         {'city': 'HENAN',        'title': 'HENAN',    'distance': '65000', 'lon': '113.6178735', 'lat': '35.1197434'},
-            'JIAOZUO':       {'city': 'JIAOZUO',      'title': 'JIAOZUO',  'distance': '14500', 'lon': '113.2191881', 'lat': '35.1867155'},
-            'JINHUA':       {'city': 'JINHUA',       'title': 'JINHUA',   'distance': '6600',  'lon': '119.5345237', 'lat': '29.1160378'},
-            'NINGBO':         {'city': 'NINGBO',       'title': 'NINGBO',   'distance': '8000',  'lon': '121.4667517', 'lat': '29.5165939'},
-            'TAIZHOU-HUIXI': {'city': 'TAIZHOU-HUIXI', 'title': 'TAIZHOU', 'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
-            'TAIZHOU-MIAOYANG': {'city': 'TAIZHOU-MIAOYANG', 'title': 'TAIZHOU', 'distance': '2200',  'lon': '121.2226776', 'lat': '28.9160953'},
-            'XINXIANG':      {'city': 'XINXIANG',     'title': 'XINXIANG', 'distance': '20000', 'lon': '113.9313797', 'lat': '35.2856284'},
+            'HANGZHOU':         {'city': 'HANGZHOU',         'title': 'HANGZHOU', 'distance': '4600',  'lon': '120.1390416', 'lat': '30.2250866'},
+            'HENAN':            {'city': 'HENAN',            'title': 'HENAN',    'distance': '65000', 'lon': '113.6178735', 'lat': '35.1197434'},
+            'JIAOZUO':          {'city': 'JIAOZUO',          'title': 'JIAOZUO',  'distance': '14500', 'lon': '113.2191881', 'lat': '35.1867155'},
+            'JINHUA':           {'city': 'JINHUA',           'title': 'JINHUA',   'distance': '6600',  'lon': '119.5345237', 'lat': '29.1160378'},
+            'NINGBO':           {'city': 'NINGBO',           'title': 'NINGBO',   'distance': '8000',  'lon': '121.4667517', 'lat': '29.5165939'},
+            'TAIZHOU-HUIXI':    {'city': 'TAIZHOU-HUIXI',    'title': 'TAIZHOU',  'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
+            'TAIZHOU-MIAOYANG': {'city': 'TAIZHOU-MIAOYANG', 'title': 'TAIZHOU',  'distance': '2200',  'lon': '121.2226776', 'lat': '28.9160953'},
+            'XINXIANG':         {'city': 'XINXIANG',         'title': 'XINXIANG', 'distance': '20000', 'lon': '113.9313797', 'lat': '35.2856284'},
         }
 
         if preset.startswith('ALL CITIES'):
             targets = list(presets.values())
             pkg_name = "ALL_CITIES_Workouts_Poster"
-            print(f"模式：ALL CITIES，将批量生成全部 {len(targets)} 个预设城市的海报！")
+            print(f"模式：ALL CITIES，将并行生成全部 {len(targets)} 个预设城市的海报！")
         elif preset in presets and not preset.startswith('CUSTOM'):
             data = presets[preset]
             city = custom_city if custom_city else data['city']
@@ -95,83 +100,136 @@ jobs:
             pkg_name = f"{custom_city}_Workouts_Poster"
             print(f"采用自定义配置: 城市={custom_city}, 纬度={custom_lat}, 经度={custom_lon}, 范围={custom_dist}米")
 
-        with open('targets.json', 'w', encoding='utf-8') as f:
-            json.dump(targets, f, ensure_ascii=False, indent=2)
+        for item in targets:
+            slug = re.sub(r'[^A-Za-z0-9_.-]+', '_', item['city']).strip('_') or 'custom'
+            digest = hashlib.sha1(
+                f"{item['city']}|{item['lat']}|{item['lon']}|{item['distance']}".encode("utf-8")
+            ).hexdigest()[:8]
+            item['safe_name'] = f"{slug}-{digest}"
+            item['cache_key'] = f"{slug}-{item['lat']}-{item['lon']}-{item['distance']}-{digest}"
 
-        env_file = os.getenv('GITHUB_ENV')
-        with open(env_file, 'a', encoding='utf-8') as f:
-            f.write(f"PACKAGE_NAME={pkg_name}\n")
+        with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
+            f.write(f"targets={json.dumps(targets, ensure_ascii=False, separators=(',', ':'))}\n")
+            f.write(f"package_name={pkg_name}\n")
         EOF
+
+  build_map:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.prepare.outputs.targets) }}
+
+    steps:
+    - name: 获取仓库代码
+      uses: actions/checkout@v7
+
+    - name: 设置 Python 3.12
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+
+    - name: 缓存 pip 依赖
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/pip
+        key: pip-ubuntu24-py312-terraink-pillow
+
+    - name: 缓存 OSM 地图数据 (.terraink-cache)
+      if: ${{ inputs.refresh_cache != true }}
+      uses: actions/cache@v6
+      with:
+        path: .terraink-cache
+        key: osm-v1-${{ matrix.target.cache_key }}
 
     - name: 安装依赖与 Inkscape
       run: |
-        python -m pip install --upgrade pip
         pip install Pillow terraink-py
         sudo apt-get update
-        sudo apt-get install -y inkscape
+        sudo apt-get install -y --no-install-recommends inkscape fonts-liberation
 
-    - name: 生成海报并渲染 300PPI PNG
+    - name: 生成海报并渲染 300PPI PNG (${{ matrix.target.city }})
+      env:
+        TARGET_CITY: ${{ matrix.target.city }}
+        TARGET_TITLE: ${{ matrix.target.title }}
+        TARGET_LAT: ${{ matrix.target.lat }}
+        TARGET_LON: ${{ matrix.target.lon }}
+        TARGET_DISTANCE: ${{ matrix.target.distance }}
       run: |
-        python - << 'EOF'
-        import json, subprocess, sys
+        python -u - << 'EOF'
+        import os, subprocess, sys
         from pathlib import Path
 
-        # 1. 预先从 workouts_page 下载全量最新运动数据
         activities_file = Path("activities.json")
         data_url = "https://raw.githubusercontent.com/yaoshubin3574/workouts_page/master/src/static/activities.json"
         print(f"📥 正在从 workouts_page 下载最新运动轨迹数据: {data_url}")
-        subprocess.run(["curl", "-sSL", "-o", str(activities_file), data_url], check=True)
+        subprocess.run(["curl", "-sSL", "--retry", "3", "--retry-delay", "2", "-o", str(activities_file), data_url], check=True)
         print(f"✅ 运动数据下载完成: {activities_file} ({activities_file.stat().st_size / 1024:.1f} KB)\n")
 
-        with open('targets.json', 'r', encoding='utf-8') as f:
-            targets = json.load(f)
+        city = os.environ["TARGET_CITY"]
+        title = os.environ["TARGET_TITLE"]
+        lat = os.environ["TARGET_LAT"]
+        lon = os.environ["TARGET_LON"]
+        dist = os.environ["TARGET_DISTANCE"]
 
         Path("output").mkdir(parents=True, exist_ok=True)
+        svg_path = f"output/{city}_Workouts_Poster.svg"
+        png_path = f"output/{city}_Workouts_Poster.png"
 
-        for idx, item in enumerate(targets, 1):
-            city = item['city']
-            title = item.get('title', city)
-            lat = item['lat']
-            lon = item['lon']
-            dist = item['distance']
-            svg_path = f"output/{city}_Workouts_Poster.svg"
-            png_path = f"output/{city}_Workouts_Poster.png"
+        print(f"==================================================")
+        print(f"正在处理: {city} (标题: {title}, 半径: {dist}m)...")
+        print(f"==================================================")
 
-            print(f"\n==================================================")
-            print(f"[{idx}/{len(targets)}] 正在处理: {city} (标题: {title}, 半径: {dist}m)...")
-            print(f"==================================================")
+        cmd_svg = [
+            sys.executable, "-u", "generate_poster.py",
+            "--lat", lat,
+            "--lon", lon,
+            "--distance", dist,
+            "--city", city,
+            "--title", title,
+            "--output", svg_path,
+            "--activities", str(activities_file),
+        ]
+        subprocess.run(cmd_svg, check=True)
 
-            # 2. 生成 SVG 矢量海报并注入 workouts_page 轨迹
-            cmd_svg = [
-                sys.executable, "generate_poster.py",
-                "--lat", str(lat),
-                "--lon", str(lon),
-                "--distance", str(dist),
-                "--city", str(city),
-                "--title", str(title),
-                "--output", svg_path,
-                "--activities", str(activities_file)
-            ]
-            subprocess.run(cmd_svg, check=True)
-
-            # 3. 调用 Inkscape 渲染 300 PPI PNG
-            cmd_png = [
-                "inkscape",
-                "--export-type=png",
-                f"--export-filename={png_path}",
-                "--export-dpi=300",
-                svg_path
-            ]
-            subprocess.run(cmd_png, check=True)
-            print(f"✅ 成功完成: {png_path} (300 PPI) 和 {svg_path}")
-
-        print("\n🎉 所有城市的海报生成与渲染已全部顺利完成！")
+        cmd_png = [
+            "inkscape",
+            "--export-type=png",
+            f"--export-filename={png_path}",
+            "--export-dpi=300",
+            svg_path,
+        ]
+        subprocess.run(cmd_png, check=True)
+        print(f"✅ 成功完成: {png_path} (300 PPI) 和 {svg_path}")
         EOF
+
+    - name: 上传单城产物
+      uses: actions/upload-artifact@v7
+      with:
+        name: poster-${{ matrix.target.safe_name }}
+        path: output/
+        if-no-files-found: error
+        retention-days: 1
+
+  publish:
+    needs: [prepare, build_map]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+    - name: 下载全部海报产物
+      uses: actions/download-artifact@v8
+      with:
+        pattern: poster-*
+        path: output/
+        merge-multiple: true
 
     - name: 打包文件提供下载 (Artifacts)
       uses: actions/upload-artifact@v7
       with:
-        name: ${{ env.PACKAGE_NAME }}
+        name: ${{ needs.prepare.outputs.package_name }}
         path: output/
         if-no-files-found: error
         retention-days: 7
@@ -179,8 +237,9 @@ jobs:
     - name: 发布 GitHub Release 并上传 PNG 附件
       env:
         GH_TOKEN: ${{ github.token }}
+        PKG_NAME: ${{ needs.prepare.outputs.package_name }}
       run: |
-        TAG_NAME="${PACKAGE_NAME}_$(date +'%Y%m%d_%H%M%S')"
+        TAG_NAME="${PKG_NAME}_$(date +'%Y%m%d_%H%M%S')"
         gh release create "$TAG_NAME" output/*.png \
-          --title "${PACKAGE_NAME}" \
+          --title "${PKG_NAME}" \
           --notes "Workouts Poster (300 PPI PNG) - generated at $(date +'%Y-%m-%d %H:%M:%S UTC')"
