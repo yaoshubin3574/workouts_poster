@@ -66,7 +66,7 @@ jobs:
         presets = {
             'HANGZHOU':     {'city': 'HANGZHOU',     'title': 'HANGZHOU', 'distance': '4600',  'lon': '120.1390416', 'lat': '30.2250866'},
             'HENAN':         {'city': 'HENAN',        'title': 'HENAN',    'distance': '65000', 'lon': '113.6178735', 'lat': '35.1197434'},
-            'JIAOZUO':       {'city': 'JIAOZUO',      'title': 'JIAOZUO',  'distance': '13000', 'lon': '113.2526282', 'lat': '35.1946971'},
+            'JIAOZUO':       {'city': 'JIAOZUO',      'title': 'JIAOZUO',  'distance': '14500', 'lon': '113.2191881', 'lat': '35.1867155'},
             'JINHUA':       {'city': 'JINHUA',       'title': 'JINHUA',   'distance': '6600',  'lon': '119.5345237', 'lat': '29.1160378'},
             'NINGBO':         {'city': 'NINGBO',       'title': 'NINGBO',   'distance': '8000',  'lon': '121.4667517', 'lat': '29.5165939'},
             'TAIZHOU-HUIXI': {'city': 'TAIZHOU-HUIXI', 'title': 'TAIZHOU', 'distance': '2000',  'lon': '121.2217447', 'lat': '28.9567779'},
