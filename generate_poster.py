@@ -525,10 +525,10 @@ poster_request = PosterRequest(
     include_buildings=True,
     show_poster_text=False,
     include_credits=False,
-    timeout_seconds=180,
+    timeout_seconds=90,
 )
 
-max_attempts = 3
+max_attempts = 2
 for attempt in range(1, max_attempts + 1):
     try:
         result = generate_poster(poster_request)
@@ -536,7 +536,7 @@ for attempt in range(1, max_attempts + 1):
     except Exception as exc:
         if attempt >= max_attempts:
             raise
-        wait_sec = 10 * attempt
+        wait_sec = 5 * attempt
         print(
             f"⚠️ 第 {attempt}/{max_attempts} 次拉取/生成基础地图失败 ({exc})，"
             f"{wait_sec} 秒后重试..."
