@@ -149,7 +149,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends inkscape fonts-liberation
 
-    - name: 生成海报并渲染 300PPI PNG (${{ matrix.target.city }})
+    - name: 生成海报并渲染 150DPI PNG (${{ matrix.target.city }})
       env:
         TARGET_CITY: ${{ matrix.target.city }}
         TARGET_TITLE: ${{ matrix.target.title }}
@@ -197,11 +197,11 @@ jobs:
             "inkscape",
             "--export-type=png",
             f"--export-filename={png_path}",
-            "--export-dpi=300",
+            "--export-dpi=150",
             svg_path,
         ]
         subprocess.run(cmd_png, check=True)
-        print(f"✅ 成功完成: {png_path} (300 PPI) 和 {svg_path}")
+        print(f"✅ 成功完成: {png_path} (150 DPI) 和 {svg_path}")
         EOF
 
     - name: 上传单城产物
@@ -242,4 +242,4 @@ jobs:
         TAG_NAME="${PKG_NAME}_$(date +'%Y%m%d_%H%M%S')"
         gh release create "$TAG_NAME" output/*.png \
           --title "${PKG_NAME}" \
-          --notes "Workouts Poster (300 PPI PNG) - generated at $(date +'%Y-%m-%d %H:%M:%S UTC')"
+          --notes "Workouts Poster (150 DPI PNG) - generated at $(date +'%Y-%m-%d %H:%M:%S UTC')"
