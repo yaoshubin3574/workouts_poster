@@ -244,6 +244,8 @@ jobs:
   package:
     needs: [prepare, build_map]
     runs-on: ubuntu-24.04
+    permissions:
+      actions: write
 
     steps:
     - name: 下载全部海报产物
@@ -260,3 +262,34 @@ jobs:
         path: output/
         if-no-files-found: error
         retention-days: 7
+
+    - name: 清理中间产物 (仅保留最终打包产物)
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python3 - << 'EOF'
+        import json, os, subprocess
+
+        repo = os.environ["GITHUB_REPOSITORY"]
+        run_id = os.environ["GITHUB_RUN_ID"]
+        res = subprocess.run(
+            ["gh", "api", f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"],
+            capture_output=True, text=True, check=False
+        )
+        if res.returncode != 0:
+            print(f"⚠️ 获取产物列表失败，跳过清理: {res.stderr.strip()}")
+            raise SystemExit(0)
+
+        artifacts = json.loads(res.stdout).get("artifacts", [])
+        for art in artifacts:
+            name = art.get("name", "")
+            if name == "activities-data" or name.startswith("poster-"):
+                del_res = subprocess.run(
+                    ["gh", "api", "-X", "DELETE", f"repos/{repo}/actions/artifacts/{art['id']}"],
+                    capture_output=True, text=True, check=False
+                )
+                if del_res.returncode == 0:
+                    print(f"🗑️ 已清理中间产物: {name} (id={art['id']})")
+                else:
+                    print(f"⚠️ 清理中间产物失败 {name}: {del_res.stderr.strip()}")
+        EOF
