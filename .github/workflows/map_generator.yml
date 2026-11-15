@@ -221,11 +221,9 @@ jobs:
         if-no-files-found: error
         retention-days: 1
 
-  publish:
+  package:
     needs: [prepare, build_map]
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
 
     steps:
     - name: 下载全部海报产物
@@ -242,13 +240,3 @@ jobs:
         path: output/
         if-no-files-found: error
         retention-days: 7
-
-    - name: 发布 GitHub Release 并上传 PNG 附件
-      env:
-        GH_TOKEN: ${{ github.token }}
-        PKG_NAME: ${{ needs.prepare.outputs.package_name }}
-      run: |
-        TAG_NAME="${PKG_NAME}_$(date +'%Y%m%d_%H%M%S')"
-        gh release create "$TAG_NAME" output/*.png \
-          --title "${PKG_NAME}" \
-          --notes "Workouts Poster (150 DPI PNG) - generated at $(date +'%Y-%m-%d %H:%M:%S UTC')"
