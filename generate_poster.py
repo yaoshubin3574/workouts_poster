@@ -1,8 +1,10 @@
 import argparse
+import http.client
 import json
 import math
 import re
 import sys
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -169,6 +171,25 @@ def _patched_classify_polygon_layer(tags):
 
 
 _osm.classify_polygon_layer = _patched_classify_polygon_layer
+
+# =========================================================
+# 🛠️ 补丁 4：修复 terraink-py 读取超时未转成 HttpRequestError 导致不重试/不切换镜像的问题
+# =========================================================
+import terraink_py.http as _http
+
+_orig_request_bytes = _http.CachedHttpClient.request_bytes
+
+
+def _patched_request_bytes(self, method, url, *, body=None, headers=None):
+    try:
+        return _orig_request_bytes(self, method, url, body=body, headers=headers)
+    except (TimeoutError, OSError, http.client.HTTPException) as exc:
+        raise _http.HttpRequestError(
+            f"{method.upper()} {url} failed: {exc}"
+        ) from exc
+
+
+_http.CachedHttpClient.request_bytes = _patched_request_bytes
 
 # =========================================================
 from terraink_py.api import MercatorProjector
@@ -490,23 +511,37 @@ def load_activities_data(source):
 
 print(f"步骤 1/3：正在生成 {args.distance}m 范围的基础地图...")
 
-result = generate_poster(
-    PosterRequest(
-        output=Path(f"./base-map-{args.city}"),
-        formats=("svg",),
-        lat=args.lat,
-        lon=args.lon,
-        title=display_title,
-        subtitle="",
-        theme="dark",
-        width_cm=21,
-        height_cm=29.7,
-        distance_m=args.distance,
-        include_buildings=True,
-        show_poster_text=False,
-        include_credits=False,
-    )
+poster_request = PosterRequest(
+    output=Path(f"./base-map-{args.city}"),
+    formats=("svg",),
+    lat=args.lat,
+    lon=args.lon,
+    title=display_title,
+    subtitle="",
+    theme="dark",
+    width_cm=21,
+    height_cm=29.7,
+    distance_m=args.distance,
+    include_buildings=True,
+    show_poster_text=False,
+    include_credits=False,
+    timeout_seconds=180,
 )
+
+max_attempts = 3
+for attempt in range(1, max_attempts + 1):
+    try:
+        result = generate_poster(poster_request)
+        break
+    except Exception as exc:
+        if attempt >= max_attempts:
+            raise
+        wait_sec = 10 * attempt
+        print(
+            f"⚠️ 第 {attempt}/{max_attempts} 次拉取/生成基础地图失败 ({exc})，"
+            f"{wait_sec} 秒后重试..."
+        )
+        time.sleep(wait_sec)
 
 print("步骤 2/3：从 workouts_page 读取并汇总运动数据...")
 

@@ -100,13 +100,14 @@ jobs:
             pkg_name = f"{custom_city}_Workouts_Poster"
             print(f"采用自定义配置: 城市={custom_city}, 纬度={custom_lat}, 经度={custom_lon}, 范围={custom_dist}米")
 
-        for item in targets:
+        for idx, item in enumerate(targets):
             slug = re.sub(r'[^A-Za-z0-9_.-]+', '_', item['city']).strip('_') or 'custom'
             digest = hashlib.sha1(
                 f"{item['city']}|{item['lat']}|{item['lon']}|{item['distance']}".encode("utf-8")
             ).hexdigest()[:8]
             item['safe_name'] = f"{slug}-{digest}"
             item['cache_key'] = f"{slug}-{item['lat']}-{item['lon']}-{item['distance']}-{digest}"
+            item['stagger_sec'] = str(idx * 2)
 
         with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
             f.write(f"targets={json.dumps(targets, ensure_ascii=False, separators=(',', ':'))}\n")
@@ -156,9 +157,10 @@ jobs:
         TARGET_LAT: ${{ matrix.target.lat }}
         TARGET_LON: ${{ matrix.target.lon }}
         TARGET_DISTANCE: ${{ matrix.target.distance }}
+        TARGET_STAGGER: ${{ matrix.target.stagger_sec }}
       run: |
         python -u - << 'EOF'
-        import os, subprocess, sys
+        import os, subprocess, sys, time
         from pathlib import Path
 
         activities_file = Path("activities.json")
@@ -172,6 +174,13 @@ jobs:
         lat = os.environ["TARGET_LAT"]
         lon = os.environ["TARGET_LON"]
         dist = os.environ["TARGET_DISTANCE"]
+        stagger_sec = int(os.environ.get("TARGET_STAGGER", "0") or "0")
+
+        cache_dir = Path(".terraink-cache")
+        has_cache = cache_dir.exists() and any(cache_dir.iterdir())
+        if not has_cache and stagger_sec > 0:
+            print(f"⏳ 未命中 OSM 缓存，错峰等待 {stagger_sec}s 以避免并发限流...")
+            time.sleep(stagger_sec)
 
         Path("output").mkdir(parents=True, exist_ok=True)
         svg_path = f"output/{city}_Workouts_Poster.svg"
