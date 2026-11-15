@@ -114,6 +114,21 @@ jobs:
             f.write(f"package_name={pkg_name}\n")
         EOF
 
+    - name: 下载最新运动轨迹数据
+      run: |
+        DATA_URL="https://raw.githubusercontent.com/yaoshubin3574/workouts_page/master/src/static/activities.json"
+        echo "📥 正在从 workouts_page 下载最新运动轨迹数据: $DATA_URL"
+        curl -sSL --retry 3 --retry-delay 2 -o activities.json "$DATA_URL"
+        ls -lh activities.json
+
+    - name: 共享运动轨迹数据 (Artifact)
+      uses: actions/upload-artifact@v7
+      with:
+        name: activities-data
+        path: activities.json
+        if-no-files-found: error
+        retention-days: 1
+
   build_map:
     needs: prepare
     runs-on: ubuntu-24.04
@@ -150,6 +165,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends inkscape fonts-liberation
 
+    - name: 下载共享运动轨迹数据
+      uses: actions/download-artifact@v8
+      with:
+        name: activities-data
+        path: .
+
     - name: 生成海报并渲染 150DPI PNG (${{ matrix.target.city }})
       env:
         TARGET_CITY: ${{ matrix.target.city }}
@@ -164,10 +185,9 @@ jobs:
         from pathlib import Path
 
         activities_file = Path("activities.json")
-        data_url = "https://raw.githubusercontent.com/yaoshubin3574/workouts_page/master/src/static/activities.json"
-        print(f"📥 正在从 workouts_page 下载最新运动轨迹数据: {data_url}")
-        subprocess.run(["curl", "-sSL", "--retry", "3", "--retry-delay", "2", "-o", str(activities_file), data_url], check=True)
-        print(f"✅ 运动数据下载完成: {activities_file} ({activities_file.stat().st_size / 1024:.1f} KB)\n")
+        if not activities_file.exists():
+            raise FileNotFoundError("未找到共享的 activities.json 文件")
+        print(f"📁 已载入共享运动数据: {activities_file} ({activities_file.stat().st_size / 1024:.1f} KB)\n")
 
         city = os.environ["TARGET_CITY"]
         title = os.environ["TARGET_TITLE"]
